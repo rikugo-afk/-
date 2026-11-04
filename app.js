@@ -11,15 +11,17 @@ function validateDevelopment(value) {
 try { const saved = localStorage.getItem(developmentKey); if (saved) development = validateDevelopment(JSON.parse(saved)); } catch { developmentBroken = true; }
 const undoHistory = [];
 let historyReady = false;
+let editSession = null, sessionHistory = [], externalChange = false;
 let sortKey = null, sortDirection = 'asc';
 let currentView = ['#completed','#development'].includes(location.hash) ? location.hash.slice(1) : 'orders';
-function workspaceRows() { return rows.filter(r => isOrderComplete(r) === (currentView !== 'orders')); }
+function belongsCompleted(row) { return editSession ? editSession.completedIds.has(row.id) : isOrderComplete(row); }
+function workspaceRows() { return rows.filter(r => belongsCompleted(r) === (currentView !== 'orders')); }
 function captureState() { return JSON.stringify({ rows, drafts, development }); }
-function updateUndoButton() { for (const id of ['undo','undo-development']) { $(id).disabled = undoHistory.length === 0; $(id).title = `保存済みの操作を元に戻します（履歴${undoHistory.length}件）`; } }
+function updateUndoButton() { const count=(editSession?sessionHistory:undoHistory).length; for (const id of ['undo','undo-development']) { $(id).disabled = count === 0; $(id).title = `操作を元に戻します（履歴${count}件）`; } }
 function recordUndo(before) {
   if (!historyReady || before === captureState()) return;
-  undoHistory.push(before);
-  while (undoHistory.length > 30 || (undoHistory.length > 1 && undoHistory.reduce((n,s) => n + s.length, 0) > 2500000)) undoHistory.shift();
+  const stack=editSession?sessionHistory:undoHistory; stack.push(before);
+  while (stack.length > 30 || (stack.length > 1 && stack.reduce((n,s) => n + s.length, 0) > 2500000)) stack.shift();
   updateUndoButton();
 }
 let reportRange = { start: '2026-10', end: '2027-09', basis: 'contract' };
@@ -47,13 +49,13 @@ function nextNumber() { const n = highestSerial(rows) + 1; if (!Number.isSafeInt
 function completeDraft(value) { return { ...value, number: nextNumber(), name: value.name || '下書き', status: value.status || statuses[0], created: value.created || localDate(), sales: Number(value.sales || 0), cost: Number(value.cost || 0), paid: value.paid === true }; }
 function findRow(id) { return rows.find(r => r.id === id) || drafts.find(r => r.id === id); }
 class MoveBackCancelled extends Error {}
-function confirmMoveBack(next) {
-  const previous = new Map(rows.map(r => [r.id,r]));
+function confirmMoveBack(next, previousRows = rows) {
+  const previous = new Map(previousRows.map(r => [r.id,r]));
   if (next.some(r => previous.has(r.id) && isOrderComplete(previous.get(r.id)) && !isOrderComplete(r)) && !confirm('空欄があります。受注管理に戻しますか？')) throw new MoveBackCancelled('受注管理への移動をキャンセルしました');
 }
 function persistDrafts(next) {
   if (storageBroken) throw new Error('保存データを読み込めないため保存を停止しています。');
-  try { localStorage.setItem(draftKey, JSON.stringify(next)); } catch { throw new Error('下書きを保存できません。ブラウザーの保存容量・設定を確認してください。'); }
+  if (!editSession) { try { localStorage.setItem(draftKey, JSON.stringify(next)); } catch { throw new Error('下書きを保存できません。ブラウザーの保存容量・設定を確認してください。'); } }
   const before = captureState(); drafts = next; recordUndo(before);
 }
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5000); }
@@ -81,13 +83,14 @@ function save(next, restoring = false, redraw = true) {
     if (!Number.isSafeInteger(brkSequence)) throw new Error('BRKの採番上限に達しました。');
     return { ...row, brk: String(brkSequence) };
   });
-  confirmMoveBack(clean);
-  try {
-    const serial = highestSerial(clean);
+  if (!editSession) confirmMoveBack(clean);
+  const serial = highestSerial(clean);
+  if (!editSession) try {
     localStorage.setItem(serialKey, String(serial)); lastSerial = serial;
     localStorage.setItem(brkKey, String(brkSequence)); lastBrk = brkSequence;
     localStorage.setItem(storageKey, JSON.stringify(clean));
   } catch { throw new Error('保存できません。ブラウザーの保存容量・設定を確認してください。'); }
+  lastSerial=serial; lastBrk=brkSequence;
   const before = captureState(); rows = clean; recordUndo(before); storageBroken = false; if (redraw) render(); else refreshTotals();
 }
 function option(select, value, label = value) { const o = document.createElement('option'); o.value = value; o.textContent = label; select.append(o); }
@@ -139,9 +142,9 @@ function updateProfit() { $('field-profit').value = yen(Number($('field-sales').
 ['sales','cost'].forEach(k => $('field-' + k).addEventListener('input', updateProfit));
 function visible() { return sortRows(filterRows(workspaceRows(), $('search').value, $('status-filter').value, $('payment-filter').value),sortKey,sortDirection); }
 function refreshTotals() {
-  $('nav-orders-count').textContent = rows.filter(r => !isOrderComplete(r)).length;
-  $('nav-completed-count').textContent = rows.filter(isOrderComplete).length;
-  $('nav-development-count').textContent = rows.filter(isOrderComplete).length;
+  $('nav-orders-count').textContent = rows.filter(r => !belongsCompleted(r)).length;
+  $('nav-completed-count').textContent = rows.filter(belongsCompleted).length;
+  $('nav-development-count').textContent = rows.filter(belongsCompleted).length;
   const report = monthlyReport(workspaceRows(), reportRange.basis, reportRange.start, reportRange.end);
   const formatMonth = value => `${value.slice(0,4)}年${Number(value.slice(5))}月`;
   const periodText = `${formatMonth(reportRange.start)}〜${formatMonth(reportRange.end)}`;
@@ -261,25 +264,25 @@ function editCell(td, rowId, field) {
             // The completed row ID also identifies any stale draft after an interrupted cleanup.
             const remaining = drafts.filter(r => r.id !== rowId), extra = remaining.length ? null : emptyDraft();
             drafts = extra ? [extra] : remaining;
-            try { localStorage.setItem(draftKey, JSON.stringify(drafts)); } catch { /* saved row remains authoritative; stale IDs are filtered on reload */ }
+            if (!editSession) try { localStorage.setItem(draftKey, JSON.stringify(drafts)); } catch { /* saved row remains authoritative; stale IDs are filtered on reload */ }
             close();
             const tr = td.parentElement; tr.classList.remove('draft-row');
             fields.forEach((f, i) => drawCell(tr.children[i], rows.find(r => r.id === rowId), f));
             drawActions(tr.lastElementChild, rows.find(r => r.id === rowId)); if (extra) appendDraftRow(extra); updateResultCount(); $('empty').hidden = true;
-            if (isOrderComplete(findRow(rowId))) { render(); toast('全項目が入力されたため「受注完了」に移動しました'); return true; }
-            toast('案件を保存しました。次の空行にも続けて入力できます'); return true;
+            if (!editSession && isOrderComplete(findRow(rowId))) { render(); toast('全項目が入力されたため「受注完了」に移動しました'); return true; }
+            toast(editSession ? '行を追加しました。「保存」で確定します' : '案件を保存しました。次の空行にも続けて入力できます'); return true;
           }
-          persistDrafts(drafts.map(r => r.id === rowId ? next : r)); toast('下書きを保存しました。案件名を入力すると案件として保存されます');
+          persistDrafts(drafts.map(r => r.id === rowId ? next : r)); toast('入力を反映しました。「保存」で確定します');
         } else {
           save(rows.map(r => r.id === rowId ? { ...r, [key]: value } : r), false, false);
           const brkCell = td.parentElement.querySelector('[data-key="brk"]'); if (brkCell) drawCell(brkCell, findRow(rowId), fields.find(([k]) => k === 'brk'));
-          toast('変更を保存しました');
+          toast(editSession ? '変更を反映しました。「保存」で確定します' : '変更を保存しました');
         }
         const profitCell = td.parentElement.querySelector('.profit-cell'); const changed = findRow(rowId);
         if (profitCell) profitCell.textContent = isDraftRow(changed.id) && changed.sales === '' && changed.cost === '' ? '' : yen(profit(changed));
       }
       close();
-      if (!isDraftRow(rowId) && isOrderComplete(findRow(rowId)) !== (currentView !== 'orders')) { render(); toast(currentView === 'orders' ? '「受注完了」に移動しました' : '空欄ができたため「受注管理」に戻しました'); }
+      if (!editSession && !isDraftRow(rowId) && isOrderComplete(findRow(rowId)) !== (currentView !== 'orders')) { render(); toast(currentView === 'orders' ? '「受注完了」に移動しました' : '空欄ができたため「受注管理」に戻しました'); }
       else if (sortKey === key || (sortKey === 'profit' && ['sales','cost'].includes(key))) render();
       return true;
     } catch (e) {
@@ -340,9 +343,10 @@ function render() {
   for (const view of ['orders','completed','development']) { $('nav-' + view).classList.toggle('active', currentView === view); $('nav-' + view).setAttribute('aria-current', currentView === view ? 'page' : 'false'); }
   $('orders-panel').hidden = devView; $('development-panel').hidden = !devView;
   if (devView) renderDevelopment();
-  $('completion-note').textContent = '備考以外の全項目が入力されると受注完了に自動移動します。0円・未入金も入力済みとして扱います。';
+  $('completion-note').textContent = '備考以外の全項目を入力し「保存」すると受注完了に移動します。0円・未入金も入力済みとして扱います。';
   $('add-row-bar').hidden = completed;
-  $('edit-table').textContent = tableEditing ? '✓ 編集を終了' : '✎ 編集'; $('edit-table').setAttribute('aria-pressed', String(tableEditing));
+  $('edit-table').textContent = tableEditing ? '✓ 保存' : '✎ 編集'; $('edit-table').setAttribute('aria-pressed', String(tableEditing));
+  $('save-state').textContent = editSession ? '編集中・未保存：「保存」を押すと変更を確定し、案件の移動を判定します。' : '保存済み';
   $('add-row').disabled = !tableEditing;
   $('edit-hint').textContent = tableEditing ? 'Enter / Tabで次の項目 ・ 矢印で上下左右に移動 ・ Shift+Enterで備考を改行 ・ Escで取消 ・ ＋で空行を追加' : '「編集」を押すと空行や既存案件に直接入力できます ・ 下の＋ボタンで行を追加';
   $('rows').classList.toggle('editing-enabled', tableEditing);
@@ -362,6 +366,7 @@ function render() {
 }
 function selectWorkspace(view) {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
+  if (editSession) { if (captureState() !== editSession.before) { toast('先に「保存」を押してからワークスペースを切り替えてください'); return; } editSession=null;sessionHistory=[];tableEditing=false; }
   currentView = view; history.replaceState(null, '', '#' + view);
   for (const id of ['search','status-filter','payment-filter']) $(id).value = '';
   render();
@@ -373,12 +378,13 @@ function developmentEntry(id) { return Object.hasOwn(development, id) ? developm
 function saveDevelopment(id, patch) {
   if (developmentBroken) throw new Error('開発進捗を読み込めないため、保存を停止しています。');
   const next = validateDevelopment({ ...development, [id]: { ...developmentEntry(id), ...patch } });
-  const before = captureState(); localStorage.setItem(developmentKey, JSON.stringify(next)); development = next; recordUndo(before);
-  toast('開発進捗を保存しました');
+  const before = captureState(); if (!editSession) localStorage.setItem(developmentKey, JSON.stringify(next)); development = next; recordUndo(before);
+  toast(editSession ? '開発進捗を反映しました。「保存」で確定します' : '開発進捗を保存しました');
 }
 function renderDevelopment() {
-  $('edit-development').textContent = tableEditing ? '✓ 編集を終了' : '✎ 編集'; $('edit-development').setAttribute('aria-pressed', String(tableEditing));
-  $('development-rows').replaceChildren(); const projects = rows.filter(isOrderComplete);
+  $('edit-development').textContent = tableEditing ? '✓ 保存' : '✎ 編集'; $('edit-development').setAttribute('aria-pressed', String(tableEditing));
+  $('save-state-development').textContent=editSession?'編集中・未保存：「保存」で確定します。':'保存済み';
+  $('development-rows').replaceChildren(); const projects = rows.filter(belongsCompleted);
   $('development-empty').hidden = projects.length > 0;
   $('development-note').textContent = developmentBroken ? '開発進捗の保存データを読み込めません。データ保護のため編集を停止しています。' : '受注完了した案件を自動表示します。「編集」を押して開発状況と備考を記録してください。';
   for (const row of projects) {
@@ -392,7 +398,7 @@ function renderDevelopment() {
     const actionCell = document.createElement('td'), details = document.createElement('button'); details.className='row-details'; details.textContent='案件詳細'; details.addEventListener('click',()=>openEditor(rows.find(r=>r.id===row.id))); actionCell.append(details); tr.append(actionCell); $('development-rows').append(tr);
   }
 }
-$('edit-development').addEventListener('click',()=>{ tableEditing=!tableEditing; render(); });
+$('edit-development').addEventListener('click',toggleEditing);
 function openEditor(row) {
   if (!row) return;
   editing = row.id; $('order-form').reset(); $('form-error').textContent = '';
@@ -407,18 +413,42 @@ function openEditor(row) {
   }
   updateProfit(); $('editor').showModal();
 }
-$('edit-table').addEventListener('click', () => {
+function toggleEditing() {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
-  tableEditing = !tableEditing; render();
-  toast(tableEditing ? '編集モード：セルをクリックして入力できます。変更は自動保存されます' : '編集を終了しました');
-});
+  if (!editSession) {
+    if(storageBroken){toast('保存データを読み込めないため編集を開始できません');return;}
+    editSession={before:captureState(),completedIds:new Set(rows.filter(isOrderComplete).map(r=>r.id))}; sessionHistory=[];externalChange=false;tableEditing=true;render();return;
+  }
+  try {
+    if(externalChange)throw new Error('別のタブでデータが変更されています。上書きを防ぐため保存を停止しています。');
+    let clean=validateRows(rows), sequence=highestBrk(clean);validateDevelopment(development);
+    clean=clean.map(row=>{
+      if(!needsBrk(row))return row;
+      sequence++;if(!Number.isSafeInteger(sequence))throw new Error('BRKの採番上限に達しました。');
+      return {...row,brk:String(sequence)};
+    });
+    const previous=JSON.parse(editSession.before);confirmMoveBack(clean,previous.rows);
+    const values=[[storageKey,JSON.stringify(clean)],[draftKey,JSON.stringify(drafts)]];
+    if(!developmentBroken)values.push([developmentKey,JSON.stringify(development)]);
+    const old=values.map(([key])=>[key,localStorage.getItem(key)]);
+    try {
+      localStorage.setItem(serialKey,String(highestSerial(clean)));localStorage.setItem(brkKey,String(highestBrk(clean)));
+      for(const [key,value] of values)localStorage.setItem(key,value);
+    } catch(error) { try { for(const [key,value] of old)if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value); } catch {storageBroken=true;} throw error; }
+    const before=editSession.before; rows=clean;lastSerial=highestSerial(clean);lastBrk=highestBrk(clean);editSession=null;sessionHistory=[];tableEditing=false;recordUndo(before);render();
+    toast('保存しました。入力状況に応じて案件の表示先を更新しました');
+  } catch(e) {toast(e instanceof MoveBackCancelled ? '移動をキャンセルしました。編集を続けるか「元に戻す」で修正してください。' : '保存できません：'+e.message);}
+}
+$('edit-table').addEventListener('click',toggleEditing);
 function undoLastOperation() {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
-  if (!undoHistory.length) return;
+  const stack=editSession?sessionHistory:undoHistory;
+  if (!stack.length) return;
   if (storageBroken) { toast('保存データを読み込めないため、元に戻す操作を停止しています。'); return; }
-  const target = JSON.parse(undoHistory.at(-1));
+  const target = JSON.parse(stack.at(-1));
   try {
     const restoredRows = validateRows(target.rows);
+    if(editSession){rows=restoredRows;drafts=target.drafts;development=target.development;stack.pop();render();toast('編集中の操作を1つ元に戻しました');return;}
     confirmMoveBack(restoredRows);
     validateDevelopment(target.development);
     const oldRows = localStorage.getItem(storageKey), oldDrafts = localStorage.getItem(draftKey), oldDevelopment = localStorage.getItem(developmentKey);
@@ -453,7 +483,7 @@ $('order-form').addEventListener('submit', e => {
   e.preventDefault();
   const row = { id: editing || crypto.randomUUID() };
   for (const [key, , type] of fields) { if (type !== 'computed') { const v = $('field-' + key).value; row[key] = type === 'number' ? Number(v) : type === 'paid' ? v === 'true' : v.trim(); } }
-  try { save(editing ? rows.map(r => r.id === editing ? row : r) : [row, ...rows]); $('editor').close(); toast('案件を保存しました'); }
+  try { save(editing ? rows.map(r => r.id === editing ? row : r) : [row, ...rows]); $('editor').close(); toast(editSession ? '変更を反映しました。一覧上部の「保存」で確定してください' : '案件を保存しました'); }
   catch (error) { $('form-error').textContent = error.message; }
 });
 $('delete').addEventListener('click', () => { if (confirm('本当に削除しますか？')) { try { save(rows.filter(r => r.id !== editing)); $('editor').close(); toast('案件を削除しました'); } catch (error) { $('form-error').textContent = error.message; } } });
@@ -461,7 +491,7 @@ for (const id of ['search','status-filter','payment-filter']) $(id).addEventList
 $('reset').addEventListener('click', () => { for (const id of ['search','status-filter','payment-filter']) $(id).value = ''; render(); });
 function download(content, filename, type) { const url = URL.createObjectURL(new Blob([content], { type })); const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 $('export').addEventListener('click', () => download(csv(visible()), `受注一覧_${localDate()}.csv`, 'text/csv;charset=utf-8'));
-$('backup').addEventListener('click', () => { if (storageBroken) { toast('保存データを読み込めないためバックアップを作成できません。'); return; } download(JSON.stringify(rows, null, 2), `order-desk_${localDate()}.json`, 'application/json'); });
+$('backup').addEventListener('click', () => { if(editSession){toast('先に「保存」を押してからバックアップしてください');return;} if (storageBroken) { toast('保存データを読み込めないためバックアップを作成できません。'); return; } download(JSON.stringify(rows, null, 2), `order-desk_${localDate()}.json`, 'application/json'); });
 $('restore').addEventListener('click', () => $('import-file').click());
 $('import-file').addEventListener('change', async e => {
   const file = e.target.files[0]; if (!file) return;
@@ -478,7 +508,8 @@ function sample() {
   try { save(examples); toast('サンプル案件を3件追加しました'); } catch (error) { toast(error.message); }
 }
 ['sample','empty-sample'].forEach(id => $(id).addEventListener('click', sample));
-window.addEventListener('storage', e => { if ([storageKey,draftKey,developmentKey].includes(e.key)) location.reload(); });
+window.addEventListener('storage', e => { if ([storageKey,draftKey,developmentKey].includes(e.key)) {if(editSession){externalChange=true;toast('別のタブでデータが変更されました。上書きを防ぐため保存を停止します。');}else location.reload();} });
+window.addEventListener('beforeunload',e=>{if(editSession&&(activeCell||captureState()!==editSession.before)){e.preventDefault();e.returnValue='';}});
 // Measure actual row heights so wrapped text and validation messages also respect the 30-row limit.
 let listHeightFrame = null;
 function scheduleListHeight() {
@@ -495,6 +526,5 @@ function scheduleListHeight() {
 }
 new ResizeObserver(scheduleListHeight).observe($('orders-table'));
 new MutationObserver(scheduleListHeight).observe($('orders-table'), { childList:true, subtree:true, characterData:true });
-if (!storageBroken && rows.some(needsBrk)) { try { save(rows, false, false); } catch (e) { toast(e.message); } }
 historyReady = true;
 render();

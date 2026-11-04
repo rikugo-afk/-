@@ -32,3 +32,5 @@
 .sort-column{border:0;background:transparent;padding:0;color:inherit;font:inherit;white-space:nowrap}.sort-column:hover{color:#188168;background:transparent}.orders-scroll th[aria-sort=ascending],.orders-scroll th[aria-sort=descending]{color:#188168;background:#edf6f0}
 
 #development-panel .section-heading{flex-wrap:wrap}#development-panel .section-heading>div:first-child{flex:1;min-width:0;flex-shrink:1}#development-note{white-space:normal}
+
+.save-state{padding:0 25px 12px;font-size:11px;color:#8f6e36}#edit-development[aria-pressed=true]{background:#188168;color:white;border-color:#188168}
