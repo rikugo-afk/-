@@ -1,4 +1,4 @@
-import { statuses, fields, profit, monthlyReport, parseMonthInput, filterRows, validateRows, csv } from './domain.js';
+import { statuses, owners, sources, fields, profit, monthlyReport, parseMonthInput, filterRows, validateRows, csv } from './domain.js';
 const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
 let reportRange = { start: '2026-10', end: '2027-09', basis: 'contract' };
@@ -13,8 +13,12 @@ const draftKey = 'order-desk:draft:v1';
 const emptyDraft = () => Object.fromEntries([['id', crypto.randomUUID()], ...fields.filter(([, , t]) => t !== 'computed').map(([k]) => [k, ''])]);
 let drafts = [emptyDraft()];
 const isDraftRow = id => drafts.some(r => r.id === id);
-function nextNumber() { let n = 1; while (rows.some(r => r.number === `S-${String(n).padStart(3,'0')}`)) n++; return `S-${String(n).padStart(3,'0')}`; }
-function completeDraft(value) { return { ...value, number: value.number || nextNumber(), name: value.name || '下書き', status: value.status || statuses[0], created: value.created || localDate(), sales: Number(value.sales || 0), cost: Number(value.cost || 0), paid: value.paid === true }; }
+const serialKey = 'order-desk:last-number';
+let lastSerial = 0;
+try { const n = Number(localStorage.getItem(serialKey)); if (Number.isSafeInteger(n) && n >= 0) lastSerial = n; } catch { /* Existing rows also establish the sequence. */ }
+function highestSerial(list) { return list.reduce((max, row) => { const m = /^S-(\d+)$/.exec(row.number || ''), n = m ? Number(m[1]) : 0; return Number.isSafeInteger(n) ? Math.max(max, n) : max; }, lastSerial); }
+function nextNumber() { const n = highestSerial(rows) + 1; if (!Number.isSafeInteger(n)) throw new Error('営業No.の採番上限に達しました。'); return `S-${String(n).padStart(3,'0')}`; }
+function completeDraft(value) { return { ...value, number: nextNumber(), name: value.name || '下書き', status: value.status || statuses[0], created: value.created || localDate(), sales: Number(value.sales || 0), cost: Number(value.cost || 0), paid: value.paid === true }; }
 function findRow(id) { return rows.find(r => r.id === id) || drafts.find(r => r.id === id); }
 function persistDrafts(next) {
   if (storageBroken) throw new Error('保存データを読み込めないため保存を停止しています。');
@@ -24,6 +28,7 @@ function persistDrafts(next) {
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5000); }
 try { const saved = localStorage.getItem(storageKey); if (saved) rows = validateRows(JSON.parse(saved)); }
 catch { storageBroken = true; toast('保存データを読み込めません。バックアップ読込で復元してください。既存データは上書きしていません。'); }
+lastSerial = highestSerial(rows);
 try {
   const savedDraft = localStorage.getItem(draftKey);
   if (savedDraft) {
@@ -38,11 +43,28 @@ try {
 function save(next, restoring = false, redraw = true) {
   if (storageBroken && !restoring) throw new Error('保存データを読み込めないため保存を停止しています。バックアップから復元してください。');
   const clean = validateRows(next);
-  try { localStorage.setItem(storageKey, JSON.stringify(clean)); } catch { throw new Error('保存できません。ブラウザーの保存容量・設定を確認してください。'); }
+  try {
+    const serial = highestSerial(clean);
+    localStorage.setItem(serialKey, String(serial)); lastSerial = serial;
+    localStorage.setItem(storageKey, JSON.stringify(clean));
+  } catch { throw new Error('保存できません。ブラウザーの保存容量・設定を確認してください。'); }
   rows = clean; storageBroken = false; if (redraw) render(); else refreshTotals();
 }
 function option(select, value, label = value) { const o = document.createElement('option'); o.value = value; o.textContent = label; select.append(o); }
+function ownerOptions(select, current = '') {
+  select.replaceChildren(); option(select, '', '未選択'); owners.forEach(name => option(select, name));
+  if (current && !owners.includes(current)) option(select, current, `${current}（既存の担当者）`);
+}
+function statusOptions(select, current = '', allowEmpty = false) {
+  select.replaceChildren(); if (allowEmpty) option(select, '', '未選択'); statuses.forEach(name => option(select, name));
+  if (current && !statuses.includes(current)) option(select, current, `${current}（既存のステータス）`);
+}
+function sourceOptions(select, current = '') {
+  select.replaceChildren(); option(select, '', '未選択'); sources.forEach(name => option(select, name));
+  if (current && !sources.includes(current)) option(select, current, `${current}（既存の流入経路）`);
+}
 statuses.forEach(s => option($('status-filter'), s));
+for (const s of new Set(rows.map(r => r.status))) if (!statuses.includes(s)) option($('status-filter'), s, s + '（既存）');
 $('period-start').value = reportRange.start.replace('-', '/'); $('period-end').value = reportRange.end.replace('-', '/'); $('date-basis').value = reportRange.basis;
 $('today').textContent = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }).format(new Date());
 for (const [key, label, type] of fields) {
@@ -50,14 +72,15 @@ for (const [key, label, type] of fields) {
   const wrapper = document.createElement('label'); wrapper.className = 'form-field' + (['note','address','name'].includes(key) ? ' wide' : '');
   const caption = document.createElement('span'); caption.textContent = label + (['number', 'name', 'status'].includes(key) ? ' *' : ''); wrapper.append(caption);
   let input;
-  if (type === 'status' || type === 'paid') {
+  if (type === 'status' || type === 'paid' || type === 'owner' || type === 'source') {
     input = document.createElement('select');
-    if (type === 'status') statuses.forEach(s => option(input, s)); else { option(input, 'false', '未入金'); option(input, 'true', '入金済'); }
+    if (type === 'owner') ownerOptions(input); else if (type === 'source') sourceOptions(input); else if (type === 'status') statusOptions(input); else { option(input, 'false', '未入金'); option(input, 'true', '入金済'); }
   } else if (type === 'textarea') { input = document.createElement('textarea'); input.rows = 3; }
   else { input = document.createElement('input'); input.type = type === 'computed' ? 'text' : type; }
   input.name = key; input.id = 'field-' + key;
   if (['number', 'name', 'status'].includes(key)) input.required = true;
   if (type === 'computed') { input.readOnly = true; input.tabIndex = -1; }
+  if (type === 'auto') { input.readOnly = true; input.tabIndex = -1; }
   if (type === 'number') { input.min = '0'; input.step = '1'; input.placeholder = '0'; }
   if (type === 'url') input.placeholder = 'https://…';
   wrapper.append(input); $('form-fields').append(wrapper);
@@ -117,6 +140,7 @@ function drawCell(td, row, field) {
   const [key, label, type] = field;
   const isDraft = isDraftRow(row.id);
   td.replaceChildren(); td.className = ['number','computed'].includes(type) ? 'numeric' : '';
+  if (type === 'auto') { td.dataset.key = key; td.textContent = isDraft ? '自動採番' : row[key]; td.classList.add('auto-number'); td.title = '案件の保存時に自動採番されます'; return; }
   if (type === 'computed') { td.textContent = isDraft && row.sales === '' && row.cost === '' ? '' : yen(profit(row)); td.classList.add('profit-cell'); td.title = '営業売上 − コスト（自動計算）'; return; }
   td.dataset.key = key;
   if (tableEditing) td.classList.add('editable-cell');
@@ -124,7 +148,7 @@ function drawCell(td, row, field) {
   if (tableEditing) { button.type = 'button'; button.setAttribute('aria-label', `${isDraft ? '空行' : row.number} ${label}を編集`); button.title = `${label}を直接編集`; }
   button.textContent = isDraft && row[key] === '' ? '' : type === 'number' ? yen(row[key]) : type === 'paid' ? (row.paid ? '入金済' : '未入金') : row[key] || '—';
   if (isDraft && row[key] === '') { button.classList.add('blank-cell'); if (key === 'name') button.dataset.placeholder = '案件名を入力'; }
-  if ((type === 'status' || type === 'paid') && !(isDraft && row[key] === '')) button.classList.add('badge', type === 'paid' ? (row.paid ? 'green' : 'amber') : ['契約済','完了'].includes(row.status) ? 'green' : row.status === '失注' ? 'gray' : 'blue');
+  if ((type === 'status' || type === 'paid') && !(isDraft && row[key] === '')) button.classList.add('badge', type === 'paid' ? (row.paid ? 'green' : 'amber') : ['契約済','契約済み','完了'].includes(row.status) ? 'green' : ['失注','破談'].includes(row.status) ? 'gray' : 'blue');
   if (key === 'name') button.classList.add('name-button');
   if (tableEditing) {
     button.addEventListener('click', () => editCell(td, row.id, field));
@@ -148,14 +172,16 @@ function navigateCell(td, key, shift = false, commit = () => true) {
   else { editCell(td, td.parentElement.dataset.id, fields.find(([k]) => k === td.dataset.key)); }
 }
 function editCell(td, rowId, field) {
-  if (!tableEditing) return;
+  if (!tableEditing || field[2] === 'auto' || field[2] === 'computed') return;
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
   const row = findRow(rowId); if (!row) return;
   const isDraft = isDraftRow(rowId);
   const [key, label, type] = field;
-  const input = document.createElement(type === 'textarea' ? 'textarea' : ['status','paid'].includes(type) ? 'select' : 'input');
+  const input = document.createElement(type === 'textarea' ? 'textarea' : ['status','paid','owner','source'].includes(type) ? 'select' : 'input');
   if (isDraft && ['status','paid'].includes(type)) option(input, '', '未入力');
-  if (type === 'status') statuses.forEach(s => option(input, s));
+  if (type === 'owner') ownerOptions(input, row[key]);
+  else if (type === 'source') sourceOptions(input, row[key]);
+  else if (type === 'status') statusOptions(input, row[key], isDraft);
   else if (type === 'paid') { option(input, 'false', '未入金'); option(input, 'true', '入金済'); }
   else if (type !== 'textarea') input.type = type;
   input.value = String(row[key] ?? ''); input.className = 'cell-input'; input.setAttribute('aria-label', `${label}を入力`);
@@ -263,6 +289,9 @@ function openEditor(row) {
   $('dialog-title').textContent = '案件を編集'; $('delete').hidden = false;
   for (const [key, , type] of fields) {
     if (type === 'computed') continue;
+    if (type === 'owner') ownerOptions($('field-owner'), row.owner);
+    if (type === 'source') sourceOptions($('field-source'), row.source);
+    if (type === 'status') statusOptions($('field-status'), row.status);
     $('field-' + key).value = row ? String(row[key] ?? '') : type === 'paid' ? 'false' : type === 'status' ? statuses[0] : key === 'created' ? localDate() : '';
   }
   updateProfit(); $('editor').showModal();
@@ -278,7 +307,7 @@ $('add-row').addEventListener('click', () => {
   try {
     if (drafts.length >= 1000) throw new Error('空行は1000行まで追加できます。');
     const row = emptyDraft(); persistDrafts([...drafts, row]); const tr = appendDraftRow(row);
-    const td = tr.querySelector('[data-key="number"]'); editCell(td, row.id, fields[0]); td.scrollIntoView({ block:'nearest', inline:'nearest' });
+    const td = tr.querySelector('.editable-cell'); editCell(td, row.id, fields.find(([key]) => key === td.dataset.key)); td.scrollIntoView({ block:'nearest', inline:'nearest' });
   } catch (e) { toast(e.message); }
 });
 ['close','cancel'].forEach(id => $(id).addEventListener('click', () => $('editor').close()));
@@ -304,9 +333,9 @@ $('import-file').addEventListener('change', async e => {
 function sample() {
   if (rows.length) { toast('サンプルは案件が未登録のときに追加できます。'); return; }
   const examples = [
-    ['S-001','株式会社 青葉商事 / 飲食店営業許可','佐藤','契約済','飲食店営業','東京都渋谷区神宮前','Webサイト',240000,45000,true],
-    ['S-002','ひかり建設 / 建設業許可更新','田中','見積提出','建設業','神奈川県横浜市中区','ご紹介',180000,30000,false],
-    ['S-003','カフェ こもれび / 新規開業サポート','鈴木','商談中','飲食店営業','東京都世田谷区三軒茶屋','お問い合わせ',150000,25000,false]
+    ['S-001','株式会社 青葉商事 / 飲食店営業許可','藤田','契約済','飲食店営業','東京都渋谷区神宮前','問い合わせ（HP）',240000,45000,true],
+    ['S-002','ひかり建設 / 建設業許可更新','本間','収支シミュ提出','建設業','神奈川県横浜市中区','紹介',180000,30000,false],
+    ['S-003','カフェ こもれび / 新規開業サポート','郷','面談取り付け','飲食店営業','東京都世田谷区三軒茶屋','新規アプローチ',150000,25000,false]
   ].map(([number,name,owner,status,permit,address,source,sales,cost,paid]) => ({ id: crypto.randomUUID(), number, name, owner, status, permit, address, source, sales, cost, paid, created: localDate(), note: 'サンプル案件（架空のデータ）' }));
   try { save(examples); toast('サンプル案件を3件追加しました'); } catch (error) { toast(error.message); }
 }

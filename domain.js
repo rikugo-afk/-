@@ -1,8 +1,11 @@
-export const statuses = ['商談中', '見積提出', '契約予定', '契約済', '完了', '失注'];
+export const statuses = ['面談取り付け', '初回面談済', '継続面談中', '収支シミュ提出', '契約交渉中', '契約締結予定', '契約済', '破談'];
+const legacyStatuses = ['商談中', '見積提出', '契約予定', '契約済み', '初回面談済み', '完了', '失注'];
+export const owners = ['藤田', '本間', '高橋', '鈴木', '郷', '菅原', 'OS'];
+export const sources = ['問い合わせ（HP）', '問い合わせ（電話）', '既存オーナー', 'OS交渉による既存オーナー', '新規アプローチ', '紹介'];
 export const fields = [
-  ['number', '営業No.', 'text'], ['brk', 'BRK', 'text'], ['status', 'ステータス', 'status'], ['owner', '担当者', 'text'],
+  ['number', '営業No.', 'auto'], ['brk', 'BRK', 'text'], ['status', 'ステータス', 'status'], ['owner', '担当者', 'owner'],
   ['created', '記入日', 'date'], ['contract', '契約予定日（締結日）', 'date'], ['name', '案件名', 'text'], ['folder', 'フォルダ', 'url'],
-  ['permit', '許可種類', 'text'], ['address', '住所', 'text'], ['map', 'Googleマップ', 'url'], ['source', '流入経路', 'text'],
+  ['permit', '許可種類', 'text'], ['address', '住所', 'text'], ['map', 'Googleマップ', 'url'], ['source', '流入経路', 'source'],
   ['sales', '営業売上', 'number'], ['cost', 'コスト', 'number'], ['profit', '営業粗利', 'computed'], ['paymentDate', '(契)入金日', 'date'],
   ['paid', '入金確認', 'paid'], ['note', '備考', 'textarea']
 ];
@@ -64,7 +67,7 @@ export function validateRows(rows) {
         if (type === 'date' && row[key] && (!/^\d{4}-\d{2}-\d{2}$/.test(row[key]) || !Number.isFinite(Date.parse(row[key])) || new Date(row[key]).toISOString().slice(0,10) !== row[key])) throw new Error('日付の形式が正しくありません。');
       }
     }
-    if (!row.number || !row.name || !statuses.includes(row.status)) throw new Error('営業No.・案件名・ステータスは必須です。');
+    if (!row.number || !row.name || ![...statuses, ...legacyStatuses].includes(row.status)) throw new Error('営業No.・案件名・ステータスは必須です。');
     if (numbers.has(row.number)) throw new Error('営業No.が重複しています。');
     numbers.add(row.number);
     return row;
