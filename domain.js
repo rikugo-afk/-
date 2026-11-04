@@ -37,7 +37,7 @@ export function hasAllOrderFields(row) {
     return typeof row[key] === 'string' && row[key].trim() !== '';
   });
 }
-export function isOrderComplete(row) { return row.status === '契約済' && hasAllOrderFields(row); }
+export function isOrderComplete(row) { return row.status === '契約済' && row.paid === true && hasAllOrderFields(row); }
 export function missingSignedFields(row) {
   return fields.slice(0,11).filter(([key])=>key!=='status'&&(typeof row[key]!=='string'||!row[key].trim())).map(([,label])=>label);
 }

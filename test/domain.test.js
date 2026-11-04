@@ -59,7 +59,9 @@ test('8桁の日付を正規化して日本語で表示し、存在しない日�
 test('備考以外の入力が揃った案件のみ受注完了とする', () => {
   const complete = { ...a, brk:'800', created:'2026-10-01', contract:'2026-10-01',folder:'https://example.com',permit:'飲食店営業',address:'東京都',map:'https://maps.google.com',source:'紹介',paymentDate:'2026-10-31',note:'' };
   assert.equal(isOrderComplete(complete),true);
-  assert.equal(isOrderComplete({...complete, sales:0,cost:0,paid:false}),true);
+  assert.equal(isOrderComplete({...complete, sales:0,cost:0,paid:false}),false);
+  assert.equal(isOrderComplete({...complete, sales:0,cost:0,paid:true}),true);
+  assert.equal(isOrderComplete({...complete,paid:''}),false);
   assert.equal(isOrderComplete({...complete,status:'契約締結予定'}),false);
   assert.equal(isOrderComplete({...complete,status:'破談'}),false);
   for (const [key,,type] of fields) if (key !== 'note' && type !== 'computed') assert.equal(isOrderComplete({...complete,[key]:''}),false,key);

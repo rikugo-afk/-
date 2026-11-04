@@ -68,7 +68,7 @@ class MoveBackCancelled extends Error {}
 function confirmMoveBack(next, previousRows = rows) {
   const previous = new Map(previousRows.map(r => [r.id,r]));
   const returning=next.filter(r=>previous.has(r.id)&&isOrderComplete(previous.get(r.id))&&!isOrderComplete(r));
-  const reason=returning.some(r=>!hasAllOrderFields(r))?'空欄があります。':'ステータスが契約済ではありません。';
+  const reason=returning.some(r=>!hasAllOrderFields(r))?'空欄があります。':returning.some(r=>r.status!=='契約済')?'ステータスが契約済ではありません。':'入金確認が入金済ではありません。';
   if(returning.length&&!confirm(reason+'受注管理に戻しますか？'))throw new MoveBackCancelled('受注管理への移動をキャンセルしました');
 }
 function persistDrafts(next) {
@@ -424,11 +424,11 @@ function render() {
   }
   const completed = currentView !== 'orders', devView = currentView === 'development';
   $('page-title').textContent = devView ? '開発進捗' : completed ? '受注完了' : '受注管理'; $('breadcrumb-title').textContent = $('page-title').textContent;
-  $('page-description').textContent = devView ? '契約済の案件の開発状況を管理します。' : completed ? '備考以外が入力済みで、ステータスが契約済の案件です。' : '案件の進捗から入金まで、ひとつの場所で。';
+  $('page-description').textContent = devView ? '契約済の案件の開発状況を管理します。' : completed ? '備考以外が入力済みで、契約済・入金済の案件です。' : '案件の進捗から入金まで、ひとつの場所で。';
   for (const view of ['orders','completed','development']) { $('nav-' + view).classList.toggle('active', currentView === view); $('nav-' + view).setAttribute('aria-current', currentView === view ? 'page' : 'false'); }
   $('orders-panel').hidden = devView; $('development-panel').hidden = !devView;
   if (devView) renderDevelopment();
-  $('completion-note').textContent = '備考以外をすべて入力し、ステータスを「契約済」にして「保存」すると受注完了へ移動します。金額の空欄は未入力です。';
+  $('completion-note').textContent = '備考以外をすべて入力し、ステータスが「契約済」、入金確認が「入金済」の状態で「保存」すると受注完了へ移動します。';
   $('add-row-bar').hidden = completed;
   $('edit-table').textContent = tableEditing ? '✓ 保存' : '✎ 編集'; $('edit-table').setAttribute('aria-pressed', String(tableEditing));
   $('save-state').textContent = editSession ? '編集中・未保存：「保存」を押すと変更を確定し、案件の移動を判定します。' : '保存済み';
@@ -447,7 +447,7 @@ function render() {
   $('empty').querySelector('h3').textContent = rows.length ? '条件に一致する案件がありません' : '上の空行から入力できます';
   $('empty').querySelector('p').textContent = rows.length ? '検索条件を変更するか、空行に新しい案件を入力できます。' : '「編集」を押して空行に入力してください。案件名を入力すると保存され、次の空行が表示されます。';
   $('empty-sample').hidden = rows.length > 0;
-  if (completed) { $('empty').hidden = filtered.length > 0; $('empty').querySelector('h3').textContent = '該当する受注完了案件はありません'; $('empty').querySelector('p').textContent = '備考以外がすべて入力済みで、ステータスが契約済の案件を表示します。'; $('empty-sample').hidden = true; }
+  if (completed) { $('empty').hidden = filtered.length > 0; $('empty').querySelector('h3').textContent = '該当する受注完了案件はありません'; $('empty').querySelector('p').textContent = '備考以外がすべて入力済みで、契約済・入金済の案件を表示します。'; $('empty-sample').hidden = true; }
 }
 function selectWorkspace(view) {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
