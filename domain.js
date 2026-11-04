@@ -26,6 +26,16 @@ export function parseMonthInput(value) {
   if (!match || Number(match[2]) < 1 || Number(match[2]) > 12) throw new Error('年月は「2026/10」のように入力してください。');
   return `${match[1]}-${match[2].padStart(2,'0')}`;
 }
+export function parseDateInput(value) {
+  const text=String(value??'').normalize('NFKC').trim(); if(!text)return '';
+  const match=text.match(/^([1-9]\d{3})(\d{2})(\d{2})$/) || text.match(/^([1-9]\d{3})(?:-|\/|年)(\d{1,2})(?:-|\/|月)(\d{1,2})日?$/);
+  if(!match)throw new Error('日付は「20261105」のように8桁で入力してください。');
+  const iso=`${match[1]}-${match[2].padStart(2,'0')}-${match[3].padStart(2,'0')}`;
+  const date=new Date(iso+'T00:00:00Z');
+  if(!Number.isFinite(date.getTime()) || date.toISOString().slice(0,10)!==iso)throw new Error('存在する日付を入力してください。');
+  return iso;
+}
+export function formatDate(value) { return value ? `${value.slice(0,4)}年${Number(value.slice(5,7))}月${Number(value.slice(8,10))}日` : ''; }
 export function monthlyReport(rows, dateKey = 'contract', start = '2026-10', end = '2027-09') {
   const monthIndex = value => {
     if (typeof value !== 'string' || !/^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(value)) throw new Error('開始月と終了月を入力してください。');

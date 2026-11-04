@@ -1,4 +1,4 @@
-import { statuses, owners, sources, permits, fields, profit, monthlyReport, parseMonthInput, filterRows, validateRows, csv, isOrderComplete, sortRows } from './domain.js';
+import { statuses, owners, sources, permits, fields, profit, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, sortRows } from './domain.js';
 const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
 const developmentKey = 'order-desk:development:v1', developmentStatuses = ['未着手','進行中','確認待ち','完了'];
@@ -128,13 +128,22 @@ for (const [key, label, type] of fields) {
     input = document.createElement('select');
     if (type === 'permit') permitOptions(input); else if (type === 'owner') ownerOptions(input); else if (type === 'source') sourceOptions(input); else if (type === 'status') statusOptions(input); else { option(input, 'false', '未入金'); option(input, 'true', '入金済'); }
   } else if (type === 'textarea') { input = document.createElement('textarea'); input.rows = 3; }
-  else { input = document.createElement('input'); input.type = type === 'computed' ? 'text' : type; }
+  else { input = document.createElement('input'); input.type = ['computed','date'].includes(type) ? 'text' : type; }
   input.name = key; input.id = 'field-' + key;
   if (['number', 'name', 'status'].includes(key)) input.required = true;
   if (type === 'computed') { input.readOnly = true; input.tabIndex = -1; }
   if (type === 'auto') { input.readOnly = true; input.tabIndex = -1; }
-  if (type === 'number') { input.min = '0'; input.step = '1'; input.placeholder = '0'; }
+  if (type === 'number') {
+    input.min = '0'; input.step = '1'; input.placeholder = '金額を入力';
+    input.addEventListener('focus',()=>{if(input.value==='0')input.value='';});
+  }
   if (type === 'url') input.placeholder = 'https://…';
+  if (type === 'date') {
+    input.placeholder='例：20261105'; input.maxLength=12;
+    input.addEventListener('focus',()=>input.select());
+    input.addEventListener('input',()=>input.setCustomValidity(''));
+    input.addEventListener('blur',()=>{try{input.value=formatDate(parseDateInput(input.value));input.setCustomValidity('');}catch(e){input.setCustomValidity(e.message);}});
+  }
   wrapper.append(input); $('form-fields').append(wrapper);
 }
 const actionsHeading = document.createElement('th'); actionsHeading.textContent = '操作'; $('columns').append(actionsHeading);
@@ -201,7 +210,7 @@ function drawCell(td, row, field) {
   if (tableEditing) td.classList.add('editable-cell');
   const button = document.createElement(tableEditing ? 'button' : 'span'); button.className = 'cell-value';
   if (tableEditing) { button.type = 'button'; button.setAttribute('aria-label', `${isDraft ? '空行' : row.number} ${label}を編集`); button.title = `${label}を直接編集`; }
-  button.textContent = isDraft && row[key] === '' ? '' : type === 'number' ? yen(row[key]) : type === 'paid' ? (row.paid ? '入金済' : '未入金') : row[key] || '—';
+  button.textContent = isDraft && row[key] === '' ? '' : type === 'date' ? formatDate(row[key]) || '—' : type === 'number' ? yen(row[key]) : type === 'paid' ? (row.paid ? '入金済' : '未入金') : row[key] || '—';
   if (isDraft && row[key] === '') { button.classList.add('blank-cell'); if (key === 'name') button.dataset.placeholder = '案件名を入力'; }
   if ((type === 'status' || type === 'paid') && !(isDraft && row[key] === '')) button.classList.add('badge', type === 'paid' ? (row.paid ? 'green' : 'amber') : ['契約済','契約済み','完了'].includes(row.status) ? 'green' : ['失注','破談'].includes(row.status) ? 'gray' : 'blue');
   if (key === 'name') button.classList.add('name-button');
@@ -240,10 +249,11 @@ function editCell(td, rowId, field) {
   else if (type === 'source') sourceOptions(input, row[key]);
   else if (type === 'status') statusOptions(input, row[key], isDraft);
   else if (type === 'paid') { option(input, 'false', '未入金'); option(input, 'true', '入金済'); }
-  else if (type !== 'textarea') input.type = type;
-  input.value = String(row[key] ?? ''); input.className = 'cell-input'; input.setAttribute('aria-label', `${label}を入力`);
+  else if (type !== 'textarea') input.type = type === 'date' ? 'text' : type;
+  input.value = type === 'date' ? String(row[key] || '').replaceAll('-','') : String(row[key] ?? ''); input.className = 'cell-input'; input.setAttribute('aria-label', `${label}を入力`);
+  if(type==='date'){input.placeholder='例：20261105';input.maxLength=12;}
   if (!isDraft && ['number','name','status'].includes(key)) input.required = true;
-  if (type === 'number') { input.min = '0'; input.step = '1'; }
+  if (type === 'number') { input.min = '0'; input.step = '1'; input.placeholder='金額を入力'; if(input.value==='0')input.value=''; }
   const error = document.createElement('span'); error.className = 'cell-error'; error.setAttribute('role','alert');
   const errorId = `cell-error-${rowId}-${key}`; error.id = errorId; input.setAttribute('aria-describedby', errorId);
   let finished = false;
@@ -252,7 +262,7 @@ function editCell(td, rowId, field) {
     if (finished) return true;
     try {
       if (!input.checkValidity()) throw new Error(input.validationMessage);
-      const value = isDraft && input.value === '' ? '' : type === 'number' ? Number(input.value) : type === 'paid' ? input.value === 'true' : input.value.trim();
+      const value = type === 'date' ? parseDateInput(input.value) : isDraft && input.value === '' ? '' : type === 'number' ? Number(input.value) : type === 'paid' ? input.value === 'true' : input.value.trim();
       const current = findRow(rowId);
       if (current[key] !== value) {
         if (isDraft) {
@@ -299,7 +309,7 @@ function editCell(td, rowId, field) {
     if (e.key === 'Escape') { e.preventDefault(); close(); td.querySelector('button').focus(); }
     if ((e.key === 'Enter' && !(type === 'textarea' && e.shiftKey)) || e.key === 'Tab' || (e.key.startsWith('Arrow') && !e.shiftKey)) { e.preventDefault(); navigateCell(td, e.key, e.shiftKey, commit); }
   });
-  input.focus(); if (['text','url','textarea'].includes(type)) input.select();
+  input.focus(); if (['text','url','textarea','date'].includes(type)) input.select();
 }
 function drawActions(td, row) {
   td.replaceChildren();
@@ -409,7 +419,8 @@ function openEditor(row) {
     if (type === 'source') sourceOptions($('field-source'), row.source);
     if (type === 'permit') permitOptions($('field-permit'), row.permit);
     if (type === 'status') statusOptions($('field-status'), row.status);
-    $('field-' + key).value = row ? String(row[key] ?? '') : type === 'paid' ? 'false' : type === 'status' ? statuses[0] : key === 'created' ? localDate() : '';
+    $('field-' + key).value = type === 'date' ? formatDate(row[key]) : String(row[key] ?? '');
+    $('field-' + key).setCustomValidity('');
   }
   updateProfit(); $('editor').showModal();
 }
@@ -481,9 +492,10 @@ $('add-row').addEventListener('click', () => {
 ['close','cancel'].forEach(id => $(id).addEventListener('click', () => $('editor').close()));
 $('order-form').addEventListener('submit', e => {
   e.preventDefault();
+  try {
   const row = { id: editing || crypto.randomUUID() };
-  for (const [key, , type] of fields) { if (type !== 'computed') { const v = $('field-' + key).value; row[key] = type === 'number' ? Number(v) : type === 'paid' ? v === 'true' : v.trim(); } }
-  try { save(editing ? rows.map(r => r.id === editing ? row : r) : [row, ...rows]); $('editor').close(); toast(editSession ? '変更を反映しました。一覧上部の「保存」で確定してください' : '案件を保存しました'); }
+  for (const [key, , type] of fields) { if (type !== 'computed') { const v = $('field-' + key).value; row[key] = type === 'date' ? parseDateInput(v) : type === 'number' ? Number(v) : type === 'paid' ? v === 'true' : v.trim(); } }
+  save(editing ? rows.map(r => r.id === editing ? row : r) : [row, ...rows]); $('editor').close(); toast(editSession ? '変更を反映しました。一覧上部の「保存」で確定してください' : '案件を保存しました'); }
   catch (error) { $('form-error').textContent = error.message; }
 });
 $('delete').addEventListener('click', () => { if (confirm('本当に削除しますか？')) { try { save(rows.filter(r => r.id !== editing)); $('editor').close(); toast('案件を削除しました'); } catch (error) { $('form-error').textContent = error.message; } } });

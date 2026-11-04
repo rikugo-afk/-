@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { profit, totals, monthlyReport, parseMonthInput, filterRows, validateRows, csv, isOrderComplete, fields, sortRows } from '../domain.js';
+import { profit, totals, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, fields, sortRows } from '../domain.js';
 import { server } from '../server.js';
 const a = { id: '1', number: 'S-001', name: '青葉商事', status: '契約済', owner: '佐藤', sales: 240000, cost: 45000, paid: true };
 const b = { ...a, id: '2', number: 'S-002', name: 'カフェ', status: '商談中', sales: 150000, cost: 25000, paid: false };
@@ -50,6 +50,11 @@ test('指定月の範囲集計・単月・年またぎ・うるう年・不正�
 test('手入力の年月を正規化し不正な月を拒否', () => {
   for (const value of ['2026/1','2026-01','2026年1月','２０２６／０１',' 2026/01 ']) assert.equal(parseMonthInput(value),'2026-01');
   for (const value of ['2026/00','2026/13','26/10','','2026/1/1','2026/1abc']) assert.throws(()=>parseMonthInput(value));
+});
+test('8桁の日付を正規化して日本語で表示し、存在しない日付を拒否',()=>{
+  for(const value of ['20261105','２０２６１１０５','2026年11月5日','2026-11-05','2026/11/5'])assert.equal(parseDateInput(value),'2026-11-05');
+  assert.equal(formatDate('2026-11-05'),'2026年11月5日');assert.equal(parseDateInput('20280229'),'2028-02-29');assert.equal(parseDateInput(''),'');
+  for(const value of ['20260229','20261301','20261100','20261131','2026115'])assert.throws(()=>parseDateInput(value));
 });
 test('備考以外の入力が揃った案件のみ受注完了とする', () => {
   const complete = { ...a, brk:'800', created:'2026-10-01', contract:'2026-10-01',folder:'https://example.com',permit:'飲食店営業',address:'東京都',map:'https://maps.google.com',source:'紹介',paymentDate:'2026-10-31',note:'' };
