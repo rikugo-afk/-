@@ -3,6 +3,14 @@ const legacyStatuses = ['商談中', '見積提出', '契約予定', '契約済�
 export const owners = ['藤田', '本間', '高橋', '鈴木', '郷', '菅原', 'OS'];
 export const sources = ['問い合わせ（HP）', '問い合わせ（電話）', '既存オーナー', 'OS交渉による既存オーナー', '新規アプローチ', '紹介'];
 export const permits = ['民泊', '旅館業'];
+export function allocateBrkNumbers(list, floor=799) {
+  let last=list.reduce((max,row)=>{const value=/^\d+$/.test(row.brk||'')?Number(row.brk):0;return Number.isSafeInteger(value)?Math.max(max,value):max;},Math.max(799,floor));
+  const rows=list.map(row=>{
+    if(row.brk||!['契約済','契約締結予定'].includes(row.status))return row;
+    last++;if(!Number.isSafeInteger(last))throw new Error('BRKの採番上限に達しました。');
+    return {...row,brk:String(last)};
+  });return {rows,last};
+}
 export const fields = [
   ['number', '営業No.', 'auto'], ['brk', 'BRK', 'auto'], ['status', 'ステータス', 'status'], ['owner', '担当者', 'owner'],
   ['created', '記入日', 'date'], ['contract', '契約予定日（締結日）', 'date'], ['name', '案件名', 'text'], ['folder', 'フォルダ', 'url'],

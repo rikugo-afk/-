@@ -1,4 +1,4 @@
-import { statuses, owners, sources, permits, fields, profit, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, hasAllOrderFields, sortRows, normalizeSalesNumbers } from './domain.js';
+import { statuses, owners, sources, permits, fields, profit, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, hasAllOrderFields, sortRows, normalizeSalesNumbers, allocateBrkNumbers } from './domain.js';
 const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
 const developmentKey = 'order-desk:development:v1', developmentStatuses = ['未着手','進行中','確認待ち','完了'];
@@ -42,7 +42,6 @@ const brkKey = 'order-desk:last-brk';
 let lastBrk = 799;
 try { const n = Number(localStorage.getItem(brkKey)); if (Number.isSafeInteger(n) && n >= 799) lastBrk = n; } catch { /* Existing BRK values establish the sequence. */ }
 function highestBrk(list) { return list.reduce((max, row) => { const n = /^\d+$/.test(row.brk || '') ? Number(row.brk) : 0; return Number.isSafeInteger(n) ? Math.max(max, n) : max; }, lastBrk); }
-const needsBrk = row => ['契約締結予定','契約済'].includes(row.status) && !row.brk;
 try { const n = Number(localStorage.getItem(serialKey)); if (Number.isSafeInteger(n) && n >= 0) lastSerial = n; } catch { /* Existing rows also establish the sequence. */ }
 function highestSerial(list) { return list.reduce((max, row) => { const m = /^(?:S-)?(\d+)$/.exec(row.number || ''), n = m ? Number(m[1]) : 0; return Number.isSafeInteger(n) ? Math.max(max, n) : max; }, lastSerial); }
 function nextNumber() { const n = highestSerial([...rows,...drafts]) + 1; if (!Number.isSafeInteger(n)) throw new Error('営業No.の採番上限に達しました。'); return String(n); }
@@ -58,8 +57,9 @@ function confirmMoveBack(next, previousRows = rows) {
 }
 function persistDrafts(next) {
   if (storageBroken) throw new Error('保存データを読み込めないため保存を停止しています。');
-  if (!editSession) { try { localStorage.setItem(draftKey, JSON.stringify(next)); } catch { throw new Error('下書きを保存できません。ブラウザーの保存容量・設定を確認してください。'); } }
-  const before = captureState(); drafts = next; recordUndo(before);
+  const allocation=allocateBrkNumbers(next,highestBrk([...rows,...drafts,...next]));
+  if (!editSession) { try { localStorage.setItem(brkKey,String(allocation.last));localStorage.setItem(draftKey, JSON.stringify(allocation.rows)); } catch { throw new Error('下書きを保存できません。ブラウザーの保存容量・設定を確認してください。'); } }
+  const before = captureState(); drafts = allocation.rows;lastBrk=allocation.last;recordUndo(before);
 }
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5000); }
 try { const saved = localStorage.getItem(storageKey); if (saved) rows = normalizeSalesNumbers(validateRows(JSON.parse(saved)),lastSerial); }
@@ -78,15 +78,11 @@ try {
   }
 } catch { storageBroken = true; toast('下書きデータを読み込めません。データ保護のため保存を停止しています。'); }
 drafts=normalizeSalesNumbers([...rows,...drafts],lastSerial).slice(rows.length);lastSerial=highestSerial([...rows,...drafts]);
+lastBrk=highestBrk([...rows,...drafts]);
 function save(next, restoring = false, redraw = true) {
   if (storageBroken && !restoring) throw new Error('保存データを読み込めないため保存を停止しています。バックアップから復元してください。');
-  let clean = normalizeSalesNumbers(validateRows(next),lastSerial), brkSequence = highestBrk(clean);
-  clean = clean.map(row => {
-    if (!needsBrk(row)) return row;
-    brkSequence++;
-    if (!Number.isSafeInteger(brkSequence)) throw new Error('BRKの採番上限に達しました。');
-    return { ...row, brk: String(brkSequence) };
-  });
+  let clean=normalizeSalesNumbers(validateRows(next),lastSerial);
+  const allocation=allocateBrkNumbers(clean,highestBrk([...clean,...drafts]));clean=allocation.rows;const brkSequence=allocation.last;
   if (!editSession) confirmMoveBack(clean);
   const serial = highestSerial(clean);
   if (!editSession) try {
@@ -201,7 +197,22 @@ function applyPeriod() {
   } catch (e) { $('period-error').textContent = e.message + ' 合計は直前の有効な期間を表示しています。'; }
 }
 for (const id of ['period-start','period-end','date-basis']) $(id).addEventListener('change', applyPeriod);
-for (const id of ['period-start','period-end']) $(id).addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); applyPeriod(); } });
+const periodNavigation=['period-start','period-end','date-basis'];
+for(const id of periodNavigation) {
+  if(id!=='date-basis')$(id).addEventListener('focus',()=>$(id).select());
+  $(id).addEventListener('keydown',e=>{
+    if(e.isComposing||e.keyCode===229||e.altKey||e.ctrlKey||e.metaKey)return;
+    const forward=['Enter','ArrowRight','ArrowDown'].includes(e.key),backward=['ArrowLeft','ArrowUp'].includes(e.key);
+    if(!forward&&!backward)return;
+    if(e.shiftKey&&e.key!=='Enter')return;
+    e.preventDefault();
+    if(id!=='date-basis') {try{parseMonthInput($(id).value);}catch{applyPeriod();return;}}
+    applyPeriod();
+    const direction=backward||e.shiftKey?-1:1;
+    const next=periodNavigation[periodNavigation.indexOf(id)+direction];
+    if(next)$(next).focus();else if(forward&&!e.shiftKey)$('period-reset').focus();
+  });
+}
 for(const id of ['period-start','period-end']) {
   const picker=$(id+'-picker');
   picker.addEventListener('click',()=>{try{picker.showPicker?.();}catch{/* Native control remains available. */}});
@@ -305,6 +316,7 @@ function editCell(td, rowId, field) {
           toast(editSession ? '変更を反映しました。「保存」で確定します' : '変更を保存しました');
         }
         const profitCell = td.parentElement.querySelector('.profit-cell'); const changed = findRow(rowId);
+        if(isDraftRow(rowId)){const brkCell=td.parentElement.querySelector('[data-key="brk"]');if(brkCell)drawCell(brkCell,changed,fields.find(([k])=>k==='brk'));}
         if (profitCell) profitCell.textContent = profit(changed) === null ? '' : yen(profit(changed));
         const copyButton=td.parentElement.querySelector('.row-copy');if(copyButton)copyButton.disabled=isDraftRow(changed.id)&&!fields.some(([k,,t])=>!['computed','auto'].includes(t)&&changed[k]!=='');
       }
@@ -474,21 +486,18 @@ function toggleEditing() {
   }
   try {
     if(externalChange)throw new Error('別のタブでデータが変更されています。上書きを防ぐため保存を停止しています。');
-    let clean=validateRows(rows), sequence=highestBrk(clean);validateDevelopment(development);
-    clean=clean.map(row=>{
-      if(!needsBrk(row))return row;
-      sequence++;if(!Number.isSafeInteger(sequence))throw new Error('BRKの採番上限に達しました。');
-      return {...row,brk:String(sequence)};
-    });
+    let clean=validateRows(rows);validateDevelopment(development);
+    const allocated=allocateBrkNumbers([...clean,...drafts],highestBrk([...clean,...drafts]));
+    const pending=allocated.rows.slice(clean.length);clean=allocated.rows.slice(0,clean.length);
     const previous=JSON.parse(editSession.before);confirmMoveBack(clean,previous.rows);
-    const values=[[storageKey,JSON.stringify(clean)],[draftKey,JSON.stringify(drafts)]];
+    const values=[[storageKey,JSON.stringify(clean)],[draftKey,JSON.stringify(pending)]];
     if(!developmentBroken)values.push([developmentKey,JSON.stringify(development)]);
     const old=values.map(([key])=>[key,localStorage.getItem(key)]);
     try {
-      localStorage.setItem(serialKey,String(highestSerial([...clean,...drafts])));localStorage.setItem(brkKey,String(highestBrk(clean)));
+      localStorage.setItem(serialKey,String(highestSerial([...clean,...pending])));localStorage.setItem(brkKey,String(allocated.last));
       for(const [key,value] of values)localStorage.setItem(key,value);
     } catch(error) { try { for(const [key,value] of old)if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value); } catch {storageBroken=true;} throw error; }
-    const before=editSession.before; rows=clean;lastSerial=highestSerial([...clean,...drafts]);lastBrk=highestBrk(clean);editSession=null;sessionHistory=[];tableEditing=false;recordUndo(before);render();
+    const before=editSession.before; rows=clean;drafts=pending;lastSerial=highestSerial([...clean,...pending]);lastBrk=allocated.last;editSession=null;sessionHistory=[];tableEditing=false;recordUndo(before);render();
     toast('保存しました。入力状況に応じて案件の表示先を更新しました');
   } catch(e) {toast(e instanceof MoveBackCancelled ? '移動をキャンセルしました。編集を続けるか「元に戻す」で修正してください。' : '保存できません：'+e.message);}
 }

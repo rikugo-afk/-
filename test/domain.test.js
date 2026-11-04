@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { profit, totals, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, fields, sortRows, normalizeSalesNumbers } from '../domain.js';
+import { profit, totals, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, fields, sortRows, normalizeSalesNumbers, allocateBrkNumbers } from '../domain.js';
 import { server } from '../server.js';
 const a = { id: '1', number: 'S-001', name: '青葉商事', status: '契約済', owner: '佐藤', sales: 240000, cost: 45000, paid: true };
 const b = { ...a, id: '2', number: 'S-002', name: 'カフェ', status: '商談中', sales: 150000, cost: 25000, paid: false };
@@ -77,6 +77,12 @@ test('営業No.は数字のみへ揃え、重複を避けて案件IDを保持',(
   const result=normalizeSalesNumbers(data,12);
   assert.deepEqual(result.map(r=>r.number),['1','10','13','14']);assert.equal(new Set(result.map(r=>r.number)).size,4);
   assert.deepEqual(result.map(r=>r.id),data.map(r=>r.id));assert.equal(data[0].number,'S-001');
+});
+test('BRKは契約済と契約締結予定の両方に採番し、既存番号と他ステータスを保持',()=>{
+  const data=[{status:'契約済',brk:''},{status:'契約締結予定',brk:''},{status:'契約交渉中',brk:''}];
+  assert.deepEqual(allocateBrkNumbers(data).rows.map(r=>r.brk),['800','801','']);
+  const next=allocateBrkNumbers([{status:'契約済',brk:'850'},{status:'契約締結予定',brk:''},{status:'破談',brk:'820'}],830);
+  assert.deepEqual(next.rows.map(r=>r.brk),['850','851','820']);assert.equal(next.last,851);assert.equal(data[0].brk,'');
 });
 test('各項目の並び替えは金額・番号・空欄・粗利・同値を正しく扱う',()=>{
   const rows=[{...a,number:'S-010',sales:100,cost:200,created:'2027-03-01',brk:''},{...b,number:'S-002',sales:20,cost:0,created:'2026-12-01',brk:'801'},{...b,id:'3',number:'S-001',sales:20,cost:0,created:'',brk:'800'}];
