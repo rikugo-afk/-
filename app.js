@@ -1,4 +1,4 @@
-import { statuses, owners, sources, fields, profit, monthlyReport, parseMonthInput, filterRows, validateRows, csv, isOrderComplete, sortRows } from './domain.js';
+import { statuses, owners, sources, permits, fields, profit, monthlyReport, parseMonthInput, filterRows, validateRows, csv, isOrderComplete, sortRows } from './domain.js';
 const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
 const developmentKey = 'order-desk:development:v1', developmentStatuses = ['未着手','進行中','確認待ち','完了'];
@@ -103,6 +103,10 @@ function sourceOptions(select, current = '') {
   select.replaceChildren(); option(select, '', '未選択'); sources.forEach(name => option(select, name));
   if (current && !sources.includes(current)) option(select, current, `${current}（既存の流入経路）`);
 }
+function permitOptions(select, current = '') {
+  select.replaceChildren(); option(select,'','未選択'); permits.forEach(name=>option(select,name));
+  if (current && !permits.includes(current)) option(select,current,`${current}（既存の許可証種類）`);
+}
 statuses.forEach(s => option($('status-filter'), s));
 for (const s of new Set(rows.map(r => r.status))) if (!statuses.includes(s)) option($('status-filter'), s, s + '（既存）');
 $('period-start').value = reportRange.start.replace('-', '/'); $('period-end').value = reportRange.end.replace('-', '/'); $('date-basis').value = reportRange.basis;
@@ -117,9 +121,9 @@ for (const [key, label, type] of fields) {
   const wrapper = document.createElement('label'); wrapper.className = 'form-field' + (['note','address','name'].includes(key) ? ' wide' : '');
   const caption = document.createElement('span'); caption.textContent = label + (['number', 'name', 'status'].includes(key) ? ' *' : ''); wrapper.append(caption);
   let input;
-  if (type === 'status' || type === 'paid' || type === 'owner' || type === 'source') {
+  if (['status','paid','owner','source','permit'].includes(type)) {
     input = document.createElement('select');
-    if (type === 'owner') ownerOptions(input); else if (type === 'source') sourceOptions(input); else if (type === 'status') statusOptions(input); else { option(input, 'false', '未入金'); option(input, 'true', '入金済'); }
+    if (type === 'permit') permitOptions(input); else if (type === 'owner') ownerOptions(input); else if (type === 'source') sourceOptions(input); else if (type === 'status') statusOptions(input); else { option(input, 'false', '未入金'); option(input, 'true', '入金済'); }
   } else if (type === 'textarea') { input = document.createElement('textarea'); input.rows = 3; }
   else { input = document.createElement('input'); input.type = type === 'computed' ? 'text' : type; }
   input.name = key; input.id = 'field-' + key;
@@ -226,9 +230,10 @@ function editCell(td, rowId, field) {
   const row = findRow(rowId); if (!row) return;
   const isDraft = isDraftRow(rowId);
   const [key, label, type] = field;
-  const input = document.createElement(type === 'textarea' ? 'textarea' : ['status','paid','owner','source'].includes(type) ? 'select' : 'input');
+  const input = document.createElement(type === 'textarea' ? 'textarea' : ['status','paid','owner','source','permit'].includes(type) ? 'select' : 'input');
   if (isDraft && ['status','paid'].includes(type)) option(input, '', '未入力');
-  if (type === 'owner') ownerOptions(input, row[key]);
+  if (type === 'permit') permitOptions(input, row[key]);
+  else if (type === 'owner') ownerOptions(input, row[key]);
   else if (type === 'source') sourceOptions(input, row[key]);
   else if (type === 'status') statusOptions(input, row[key], isDraft);
   else if (type === 'paid') { option(input, 'false', '未入金'); option(input, 'true', '入金済'); }
@@ -396,6 +401,7 @@ function openEditor(row) {
     if (type === 'computed') continue;
     if (type === 'owner') ownerOptions($('field-owner'), row.owner);
     if (type === 'source') sourceOptions($('field-source'), row.source);
+    if (type === 'permit') permitOptions($('field-permit'), row.permit);
     if (type === 'status') statusOptions($('field-status'), row.status);
     $('field-' + key).value = row ? String(row[key] ?? '') : type === 'paid' ? 'false' : type === 'status' ? statuses[0] : key === 'created' ? localDate() : '';
   }

@@ -2,10 +2,11 @@ export const statuses = ['面談取り付け', '初回面談済', '継続面談�
 const legacyStatuses = ['商談中', '見積提出', '契約予定', '契約済み', '初回面談済み', '完了', '失注'];
 export const owners = ['藤田', '本間', '高橋', '鈴木', '郷', '菅原', 'OS'];
 export const sources = ['問い合わせ（HP）', '問い合わせ（電話）', '既存オーナー', 'OS交渉による既存オーナー', '新規アプローチ', '紹介'];
+export const permits = ['民泊', '旅館業'];
 export const fields = [
   ['number', '営業No.', 'auto'], ['brk', 'BRK', 'auto'], ['status', 'ステータス', 'status'], ['owner', '担当者', 'owner'],
   ['created', '記入日', 'date'], ['contract', '契約予定日（締結日）', 'date'], ['name', '案件名', 'text'], ['folder', 'フォルダ', 'url'],
-  ['permit', '許可種類', 'text'], ['address', '住所', 'text'], ['map', 'Googleマップ', 'url'], ['source', '流入経路', 'source'],
+  ['permit', '許可証種類', 'permit'], ['address', '住所', 'text'], ['map', 'Googleマップ', 'url'], ['source', '流入経路', 'source'],
   ['sales', '営業売上', 'number'], ['cost', 'コスト', 'number'], ['profit', '営業粗利', 'computed'], ['paymentDate', '(契)入金日', 'date'],
   ['paid', '入金確認', 'paid'], ['note', '備考', 'textarea']
 ];
