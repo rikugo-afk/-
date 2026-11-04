@@ -1,10 +1,21 @@
-import { statuses, owners, sources, fields, profit, monthlyReport, parseMonthInput, filterRows, validateRows, csv } from './domain.js';
+import { statuses, owners, sources, fields, profit, monthlyReport, parseMonthInput, filterRows, validateRows, csv, isOrderComplete, sortRows } from './domain.js';
 const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
+const developmentKey = 'order-desk:development:v1', developmentStatuses = ['未着手','進行中','確認待ち','完了'];
+let development = {}, developmentBroken = false;
+function validateDevelopment(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('開発進捗の形式が不正です。');
+  for (const item of Object.values(value)) if (!item || !developmentStatuses.includes(item.status) || typeof item.note !== 'string' || item.note.length > 10000) throw new Error('開発進捗の形式が不正です。');
+  return value;
+}
+try { const saved = localStorage.getItem(developmentKey); if (saved) development = validateDevelopment(JSON.parse(saved)); } catch { developmentBroken = true; }
 const undoHistory = [];
 let historyReady = false;
-function captureState() { return JSON.stringify({ rows, drafts }); }
-function updateUndoButton() { $('undo').disabled = undoHistory.length === 0; $('undo').title = `保存済みの操作を元に戻します（履歴${undoHistory.length}件）`; }
+let sortKey = null, sortDirection = 'asc';
+let currentView = ['#completed','#development'].includes(location.hash) ? location.hash.slice(1) : 'orders';
+function workspaceRows() { return rows.filter(r => isOrderComplete(r) === (currentView !== 'orders')); }
+function captureState() { return JSON.stringify({ rows, drafts, development }); }
+function updateUndoButton() { for (const id of ['undo','undo-development']) { $(id).disabled = undoHistory.length === 0; $(id).title = `保存済みの操作を元に戻します（履歴${undoHistory.length}件）`; } }
 function recordUndo(before) {
   if (!historyReady || before === captureState()) return;
   undoHistory.push(before);
@@ -35,6 +46,11 @@ function highestSerial(list) { return list.reduce((max, row) => { const m = /^S-
 function nextNumber() { const n = highestSerial(rows) + 1; if (!Number.isSafeInteger(n)) throw new Error('営業No.の採番上限に達しました。'); return `S-${String(n).padStart(3,'0')}`; }
 function completeDraft(value) { return { ...value, number: nextNumber(), name: value.name || '下書き', status: value.status || statuses[0], created: value.created || localDate(), sales: Number(value.sales || 0), cost: Number(value.cost || 0), paid: value.paid === true }; }
 function findRow(id) { return rows.find(r => r.id === id) || drafts.find(r => r.id === id); }
+class MoveBackCancelled extends Error {}
+function confirmMoveBack(next) {
+  const previous = new Map(rows.map(r => [r.id,r]));
+  if (next.some(r => previous.has(r.id) && isOrderComplete(previous.get(r.id)) && !isOrderComplete(r)) && !confirm('空欄があります。受注管理に戻しますか？')) throw new MoveBackCancelled('受注管理への移動をキャンセルしました');
+}
 function persistDrafts(next) {
   if (storageBroken) throw new Error('保存データを読み込めないため保存を停止しています。');
   try { localStorage.setItem(draftKey, JSON.stringify(next)); } catch { throw new Error('下書きを保存できません。ブラウザーの保存容量・設定を確認してください。'); }
@@ -65,6 +81,7 @@ function save(next, restoring = false, redraw = true) {
     if (!Number.isSafeInteger(brkSequence)) throw new Error('BRKの採番上限に達しました。');
     return { ...row, brk: String(brkSequence) };
   });
+  confirmMoveBack(clean);
   try {
     const serial = highestSerial(clean);
     localStorage.setItem(serialKey, String(serial)); lastSerial = serial;
@@ -91,7 +108,12 @@ for (const s of new Set(rows.map(r => r.status))) if (!statuses.includes(s)) opt
 $('period-start').value = reportRange.start.replace('-', '/'); $('period-end').value = reportRange.end.replace('-', '/'); $('date-basis').value = reportRange.basis;
 $('today').textContent = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }).format(new Date());
 for (const [key, label, type] of fields) {
-  const th = document.createElement('th'); th.textContent = label; if (type === 'number' || type === 'computed') th.className = 'numeric'; $('columns').append(th);
+  const th = document.createElement('th'); th.dataset.sortKey = key; th.scope='col'; th.setAttribute('aria-sort','none');
+  const sort = document.createElement('button'); sort.type='button'; sort.className='sort-column'; sort.textContent=label+' ↕'; sort.setAttribute('aria-label',label+'で並び替え');
+  sort.addEventListener('click',()=>{
+    if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
+    sortDirection = sortKey === key && sortDirection === 'asc' ? 'desc' : 'asc'; sortKey=key; render();
+  }); th.append(sort); if (type === 'number' || type === 'computed') th.className = 'numeric'; $('columns').append(th);
   const wrapper = document.createElement('label'); wrapper.className = 'form-field' + (['note','address','name'].includes(key) ? ' wide' : '');
   const caption = document.createElement('span'); caption.textContent = label + (['number', 'name', 'status'].includes(key) ? ' *' : ''); wrapper.append(caption);
   let input;
@@ -111,9 +133,12 @@ for (const [key, label, type] of fields) {
 const actionsHeading = document.createElement('th'); actionsHeading.textContent = '操作'; $('columns').append(actionsHeading);
 function updateProfit() { $('field-profit').value = yen(Number($('field-sales').value || 0) - Number($('field-cost').value || 0)); }
 ['sales','cost'].forEach(k => $('field-' + k).addEventListener('input', updateProfit));
-function visible() { return filterRows(rows, $('search').value, $('status-filter').value, $('payment-filter').value); }
+function visible() { return sortRows(filterRows(workspaceRows(), $('search').value, $('status-filter').value, $('payment-filter').value),sortKey,sortDirection); }
 function refreshTotals() {
-  const report = monthlyReport(rows, reportRange.basis, reportRange.start, reportRange.end);
+  $('nav-orders-count').textContent = rows.filter(r => !isOrderComplete(r)).length;
+  $('nav-completed-count').textContent = rows.filter(isOrderComplete).length;
+  $('nav-development-count').textContent = rows.filter(isOrderComplete).length;
+  const report = monthlyReport(workspaceRows(), reportRange.basis, reportRange.start, reportRange.end);
   const formatMonth = value => `${value.slice(0,4)}年${Number(value.slice(5))}月`;
   const periodText = `${formatMonth(reportRange.start)}〜${formatMonth(reportRange.end)}`;
   const basisText = reportRange.basis === 'contract' ? '契約予定日（締結日）' : '(契)入金日';
@@ -182,6 +207,7 @@ function drawCell(td, row, field) {
 }
 function navigateCell(td, key, shift = false, commit = () => true) {
   if (!commit()) { activeCell?.input.focus(); return; }
+  if (!td.isConnected) return;
   const all = [...$('rows').querySelectorAll('.editable-cell')], cells = [...td.parentElement.querySelectorAll('.editable-cell')];
   let target;
   if (key === 'Enter' || key === 'Tab') target = all[all.indexOf(td) + (shift ? -1 : 1)];
@@ -235,6 +261,7 @@ function editCell(td, rowId, field) {
             const tr = td.parentElement; tr.classList.remove('draft-row');
             fields.forEach((f, i) => drawCell(tr.children[i], rows.find(r => r.id === rowId), f));
             drawActions(tr.lastElementChild, rows.find(r => r.id === rowId)); if (extra) appendDraftRow(extra); updateResultCount(); $('empty').hidden = true;
+            if (isOrderComplete(findRow(rowId))) { render(); toast('全項目が入力されたため「受注完了」に移動しました'); return true; }
             toast('案件を保存しました。次の空行にも続けて入力できます'); return true;
           }
           persistDrafts(drafts.map(r => r.id === rowId ? next : r)); toast('下書きを保存しました。案件名を入力すると案件として保存されます');
@@ -246,8 +273,14 @@ function editCell(td, rowId, field) {
         const profitCell = td.parentElement.querySelector('.profit-cell'); const changed = findRow(rowId);
         if (profitCell) profitCell.textContent = isDraftRow(changed.id) && changed.sales === '' && changed.cost === '' ? '' : yen(profit(changed));
       }
-      close(); return true;
-    } catch (e) { error.textContent = e.message; input.setAttribute('aria-invalid', 'true'); return false; }
+      close();
+      if (!isDraftRow(rowId) && isOrderComplete(findRow(rowId)) !== (currentView !== 'orders')) { render(); toast(currentView === 'orders' ? '「受注完了」に移動しました' : '空欄ができたため「受注管理」に戻しました'); }
+      else if (sortKey === key || (sortKey === 'profit' && ['sales','cost'].includes(key))) render();
+      return true;
+    } catch (e) {
+      if (e instanceof MoveBackCancelled) { close(); toast(e.message); return true; }
+      error.textContent = e.message; input.setAttribute('aria-invalid', 'true'); return false;
+    }
   }
   activeCell = { input, commit, cancel: close };
   td.replaceChildren(input, error); td.classList.add('cell-editing');
@@ -286,11 +319,24 @@ function appendDraftRow(draft) {
   for (const field of fields) { const td = document.createElement('td'); drawCell(td, draft, field); tr.append(td); }
   const actions = document.createElement('td'); drawActions(actions, draft); tr.append(actions); $('rows').append(tr); return tr;
 }
-function updateResultCount() { const count = visible().length; $('visible-count').textContent = count; $('result-count').textContent = `${rows.length}件中 ${count}件を表示（空行・下書きは件数に含みません）`; }
+function updateResultCount() { const count = visible().length; $('visible-count').textContent = count; $('result-count').textContent = `${workspaceRows().length}件中 ${count}件を表示（空行・下書きは件数に含みません）`; }
 function render() {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
   refreshTotals();
   updateUndoButton();
+  for (const [key,label] of fields) {
+    const th = $('columns').querySelector(`[data-sort-key="${key}"]`);
+    th.setAttribute('aria-sort',sortKey===key ? sortDirection==='asc' ? 'ascending':'descending' : 'none');
+    th.querySelector('button').textContent=label+' '+(sortKey===key ? sortDirection==='asc' ? '↑':'↓' : '↕');
+  }
+  const completed = currentView !== 'orders', devView = currentView === 'development';
+  $('page-title').textContent = devView ? '開発進捗' : completed ? '受注完了' : '受注管理'; $('breadcrumb-title').textContent = $('page-title').textContent;
+  $('page-description').textContent = devView ? '受注完了した案件の開発状況を管理します。' : completed ? '備考以外の全項目が入力された案件です。' : '案件の進捗から入金まで、ひとつの場所で。';
+  for (const view of ['orders','completed','development']) { $('nav-' + view).classList.toggle('active', currentView === view); $('nav-' + view).setAttribute('aria-current', currentView === view ? 'page' : 'false'); }
+  $('orders-panel').hidden = devView; $('development-panel').hidden = !devView;
+  if (devView) renderDevelopment();
+  $('completion-note').textContent = '備考以外の全項目が入力されると受注完了に自動移動します。0円・未入金も入力済みとして扱います。';
+  $('add-row-bar').hidden = completed;
   $('edit-table').textContent = tableEditing ? '✓ 編集を終了' : '✎ 編集'; $('edit-table').setAttribute('aria-pressed', String(tableEditing));
   $('add-row').disabled = !tableEditing;
   $('edit-hint').textContent = tableEditing ? 'Enter / Tabで次の項目 ・ 矢印で上下左右に移動 ・ Shift+Enterで備考を改行 ・ Escで取消 ・ ＋で空行を追加' : '「編集」を押すと空行や既存案件に直接入力できます ・ 下の＋ボタンで行を追加';
@@ -302,12 +348,46 @@ function render() {
     const actions = document.createElement('td'); drawActions(actions, row); tr.append(actions);
     $('rows').append(tr);
   }
-  drafts.forEach(appendDraftRow);
+  if (!completed) drafts.forEach(appendDraftRow);
   $('empty').hidden = filtered.length > 0 || tableEditing;
   $('empty').querySelector('h3').textContent = rows.length ? '条件に一致する案件がありません' : '上の空行から入力できます';
   $('empty').querySelector('p').textContent = rows.length ? '検索条件を変更するか、空行に新しい案件を入力できます。' : '「編集」を押して空行に入力してください。案件名を入力すると保存され、次の空行が表示されます。';
   $('empty-sample').hidden = rows.length > 0;
+  if (completed) { $('empty').hidden = filtered.length > 0; $('empty').querySelector('h3').textContent = '該当する受注完了案件はありません'; $('empty').querySelector('p').textContent = '備考以外の全項目が入力された案件が、ここに自動で表示されます。'; $('empty-sample').hidden = true; }
 }
+function selectWorkspace(view) {
+  if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
+  currentView = view; history.replaceState(null, '', '#' + view);
+  for (const id of ['search','status-filter','payment-filter']) $(id).value = '';
+  render();
+}
+$('nav-orders').addEventListener('click', () => selectWorkspace('orders'));
+$('nav-completed').addEventListener('click', () => selectWorkspace('completed'));
+$('nav-development').addEventListener('click', () => selectWorkspace('development'));
+function developmentEntry(id) { return Object.hasOwn(development, id) ? development[id] : { status:'未着手', note:'' }; }
+function saveDevelopment(id, patch) {
+  if (developmentBroken) throw new Error('開発進捗を読み込めないため、保存を停止しています。');
+  const next = validateDevelopment({ ...development, [id]: { ...developmentEntry(id), ...patch } });
+  const before = captureState(); localStorage.setItem(developmentKey, JSON.stringify(next)); development = next; recordUndo(before);
+  toast('開発進捗を保存しました');
+}
+function renderDevelopment() {
+  $('edit-development').textContent = tableEditing ? '✓ 編集を終了' : '✎ 編集'; $('edit-development').setAttribute('aria-pressed', String(tableEditing));
+  $('development-rows').replaceChildren(); const projects = rows.filter(isOrderComplete);
+  $('development-empty').hidden = projects.length > 0;
+  $('development-note').textContent = developmentBroken ? '開発進捗の保存データを読み込めません。データ保護のため編集を停止しています。' : '受注完了した案件を自動表示します。「編集」を押して開発状況と備考を記録してください。';
+  for (const row of projects) {
+    const tr = document.createElement('tr'); tr.dataset.id = row.id;
+    for (const text of [row.number, row.name, row.owner]) { const td = document.createElement('td'); td.textContent = text; tr.append(td); }
+    const entry = developmentEntry(row.id), statusCell = document.createElement('td'), select = document.createElement('select');
+    select.setAttribute('aria-label', `${row.number}の開発状況`); developmentStatuses.forEach(s => option(select,s)); select.value = entry.status; select.disabled = !tableEditing || developmentBroken;
+    select.addEventListener('change', () => { try { saveDevelopment(row.id, {status:select.value}); } catch (e) { select.value = developmentEntry(row.id).status; toast('保存できません：' + e.message); } }); statusCell.append(select); tr.append(statusCell);
+    const noteCell = document.createElement('td'), note = document.createElement('textarea'); note.rows = 2; note.maxLength = 10000; note.value = entry.note; note.setAttribute('aria-label', `${row.number}の開発備考`); note.placeholder = '作業内容・確認事項など'; note.disabled = !tableEditing || developmentBroken;
+    note.addEventListener('change', () => { try { saveDevelopment(row.id,{note:note.value}); } catch(e) { toast('保存できません：' + e.message); } }); noteCell.append(note); tr.append(noteCell);
+    const actionCell = document.createElement('td'), details = document.createElement('button'); details.className='row-details'; details.textContent='案件詳細'; details.addEventListener('click',()=>openEditor(rows.find(r=>r.id===row.id))); actionCell.append(details); tr.append(actionCell); $('development-rows').append(tr);
+  }
+}
+$('edit-development').addEventListener('click',()=>{ tableEditing=!tableEditing; render(); });
 function openEditor(row) {
   if (!row) return;
   editing = row.id; $('order-form').reset(); $('form-error').textContent = '';
@@ -326,28 +406,33 @@ $('edit-table').addEventListener('click', () => {
   tableEditing = !tableEditing; render();
   toast(tableEditing ? '編集モード：セルをクリックして入力できます。変更は自動保存されます' : '編集を終了しました');
 });
-$('undo').addEventListener('click', () => {
+function undoLastOperation() {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
   if (!undoHistory.length) return;
   if (storageBroken) { toast('保存データを読み込めないため、元に戻す操作を停止しています。'); return; }
   const target = JSON.parse(undoHistory.at(-1));
   try {
     const restoredRows = validateRows(target.rows);
-    const oldRows = localStorage.getItem(storageKey), oldDrafts = localStorage.getItem(draftKey);
+    confirmMoveBack(restoredRows);
+    validateDevelopment(target.development);
+    const oldRows = localStorage.getItem(storageKey), oldDrafts = localStorage.getItem(draftKey), oldDevelopment = localStorage.getItem(developmentKey);
     try {
       localStorage.setItem(storageKey, JSON.stringify(restoredRows));
       localStorage.setItem(draftKey, JSON.stringify(target.drafts));
+      localStorage.setItem(developmentKey, JSON.stringify(target.development));
     } catch (error) {
       try {
         if (oldRows === null) localStorage.removeItem(storageKey); else localStorage.setItem(storageKey, oldRows);
         if (oldDrafts === null) localStorage.removeItem(draftKey); else localStorage.setItem(draftKey, oldDrafts);
+        if (oldDevelopment === null) localStorage.removeItem(developmentKey); else localStorage.setItem(developmentKey, oldDevelopment);
       } catch { storageBroken = true; }
       throw error;
     }
-    rows = restoredRows; drafts = target.drafts; undoHistory.pop();
+    rows = restoredRows; drafts = target.drafts; development = target.development; undoHistory.pop();
     render(); toast('保存済みの操作を1つ元に戻しました');
-  } catch { toast('元に戻せませんでした。ブラウザーの保存容量・設定を確認してください。'); }
-});
+  } catch (e) { toast(e instanceof MoveBackCancelled ? e.message : '元に戻せませんでした。ブラウザーの保存容量・設定を確認してください。'); }
+}
+$('undo').addEventListener('click',undoLastOperation); $('undo-development').addEventListener('click',undoLastOperation);
 $('add-row').addEventListener('click', () => {
   if (!tableEditing) return;
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
@@ -387,7 +472,7 @@ function sample() {
   try { save(examples); toast('サンプル案件を3件追加しました'); } catch (error) { toast(error.message); }
 }
 ['sample','empty-sample'].forEach(id => $(id).addEventListener('click', sample));
-window.addEventListener('storage', e => { if (e.key === storageKey || e.key === draftKey) location.reload(); });
+window.addEventListener('storage', e => { if ([storageKey,draftKey,developmentKey].includes(e.key)) location.reload(); });
 // Measure actual row heights so wrapped text and validation messages also respect the 30-row limit.
 let listHeightFrame = null;
 function scheduleListHeight() {

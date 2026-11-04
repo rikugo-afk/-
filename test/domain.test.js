@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { profit, totals, monthlyReport, parseMonthInput, filterRows, validateRows, csv } from '../domain.js';
+import { profit, totals, monthlyReport, parseMonthInput, filterRows, validateRows, csv, isOrderComplete, fields, sortRows } from '../domain.js';
 import { server } from '../server.js';
 const a = { id: '1', number: 'S-001', name: '青葉商事', status: '契約済', owner: '佐藤', sales: 240000, cost: 45000, paid: true };
 const b = { ...a, id: '2', number: 'S-002', name: 'カフェ', status: '商談中', sales: 150000, cost: 25000, paid: false };
@@ -50,6 +50,23 @@ test('指定月の範囲集計・単月・年またぎ・うるう年・不正�
 test('手入力の年月を正規化し不正な月を拒否', () => {
   for (const value of ['2026/1','2026-01','2026年1月','２０２６／０１',' 2026/01 ']) assert.equal(parseMonthInput(value),'2026-01');
   for (const value of ['2026/00','2026/13','26/10','','2026/1/1','2026/1abc']) assert.throws(()=>parseMonthInput(value));
+});
+test('備考以外の入力が揃った案件のみ受注完了とする', () => {
+  const complete = { ...a, brk:'800', created:'2026-10-01', contract:'2026-10-01',folder:'https://example.com',permit:'飲食店営業',address:'東京都',map:'https://maps.google.com',source:'紹介',paymentDate:'2026-10-31',note:'' };
+  assert.equal(isOrderComplete(complete),true);
+  assert.equal(isOrderComplete({...complete, sales:0,cost:0,paid:false}),true);
+  for (const [key,,type] of fields) if (key !== 'note' && type !== 'computed') assert.equal(isOrderComplete({...complete,[key]:''}),false,key);
+  assert.equal(isOrderComplete({...complete, owner:'  '}),false);
+});
+test('各項目の並び替えは金額・番号・空欄・粗利・同値を正しく扱う',()=>{
+  const rows=[{...a,number:'S-010',sales:100,cost:200,created:'2027-03-01',brk:''},{...b,number:'S-002',sales:20,cost:0,created:'2026-12-01',brk:'801'},{...b,id:'3',number:'S-001',sales:20,cost:0,created:'',brk:'800'}];
+  assert.deepEqual(sortRows(rows,'number').map(r=>r.number),['S-001','S-002','S-010']);
+  assert.deepEqual(sortRows(rows,'sales').map(r=>r.sales),[20,20,100]);
+  assert.equal(sortRows(rows,'profit')[0].number,'S-010');
+  assert.equal(sortRows(rows,'brk','desc').at(-1).brk,'');
+  assert.equal(sortRows(rows,'created','desc')[0].number,'S-010');
+  assert.equal(sortRows(rows,'created','desc').at(-1).created,'');
+  assert.equal(sortRows(rows,'sales')[0].number,'S-002');assert.equal(rows[0].number,'S-010');
 });
 test('CSVの18列、引用符、数式の無効化と入金表示', () => {
   const output = csv([{ ...a, name: '=HYPERLINK("x")', note: '複数\n行,備考' }]);

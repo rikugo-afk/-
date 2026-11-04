@@ -10,6 +10,15 @@ export const fields = [
   ['paid', '入金確認', 'paid'], ['note', '備考', 'textarea']
 ];
 export function profit(row) { return Number(row.sales || 0) - Number(row.cost || 0); }
+export function isOrderComplete(row) {
+  return fields.every(([key,,type]) => {
+    if (key === 'note') return true;
+    if (type === 'computed') return Number.isFinite(profit(row));
+    if (type === 'number') return typeof row[key] === 'number' && Number.isFinite(row[key]) && row[key] >= 0;
+    if (type === 'paid') return typeof row[key] === 'boolean';
+    return typeof row[key] === 'string' && row[key].trim() !== '';
+  });
+}
 export function totals(rows) { return rows.reduce((t, r) => ({ sales: t.sales + Number(r.sales || 0), profit: t.profit + profit(r), unpaid: t.unpaid + (r.paid ? 0 : Number(r.sales || 0)) }), { sales: 0, profit: 0, unpaid: 0 }); }
 export function parseMonthInput(value) {
   const match = String(value ?? '').normalize('NFKC').trim().match(/^([1-9]\d{3})(?:\/|-|年)(\d{1,2})月?$/);
@@ -41,6 +50,17 @@ export function monthlyReport(rows, dateKey = 'contract', start = '2026-10', end
 export function filterRows(rows, query = '', status = '', payment = '') {
   const q = query.trim().toLocaleLowerCase();
   return rows.filter(r => (!status || r.status === status) && (!payment || (payment === 'paid' ? r.paid : !r.paid)) && (!q || fields.some(([k]) => String(r[k] ?? '').toLocaleLowerCase().includes(q))));
+}
+const orderCollator = new Intl.Collator('ja', {numeric:true, sensitivity:'base'});
+export function sortRows(rows, key, direction = 'asc') {
+  if (!fields.some(([k]) => k === key)) return [...rows];
+  const value = row => key === 'profit' ? profit(row) : row[key];
+  return rows.map((row,index) => ({row,index})).sort((a,b) => {
+    const av = value(a.row), bv = value(b.row), empty = v => v == null || v === '';
+    if (empty(av) || empty(bv)) return empty(av) === empty(bv) ? a.index - b.index : empty(av) ? 1 : -1;
+    const n = typeof av === 'number' && typeof bv === 'number' ? av - bv : typeof av === 'boolean' && typeof bv === 'boolean' ? Number(av)-Number(bv) : orderCollator.compare(String(av),String(bv));
+    return (direction === 'desc' ? -n : n) || a.index-b.index;
+  }).map(x=>x.row);
 }
 export function validateRows(rows) {
   if (!Array.isArray(rows) || rows.length > 10000) throw new Error('バックアップの形式が正しくありません。');
