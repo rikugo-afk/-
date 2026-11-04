@@ -31,7 +31,7 @@ npm test
 npm run build
 ```
 
-`dist/` に静的サイトが生成されます。このフォルダ内の5ファイルだけをHTTPS対応の静的ホスティングに配置します。Node.jsサーバーは公開先で不要です。サブディレクトリへの配置にも対応しています。`index.html` はファイルとして直接開くのではなく、HTTP/HTTPS経由で配信してください。
+`dist/` に静的サイトが生成されます。JSとCSSは内容に応じてファイル名が変わるため、公開後に古いスクリプトが混在することを防ぎます。このフォルダ内の5ファイルだけをHTTPS対応の静的ホスティングに配置します。Node.jsサーバーは公開先で不要です。サブディレクトリへの配置にも対応しています。`index.html` はファイルとして直接開くのではなく、HTTP/HTTPS経由で配信してください。
 
 - Netlify：ビルドコマンド `npm run build`、公開ディレクトリ `dist`。手動配置の場合は生成した `dist` フォルダをアップロードします。
 - Vercel：Framework PresetをOther、Build Commandを `npm run build`、Output Directoryを `dist` に設定します。

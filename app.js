@@ -186,9 +186,10 @@ function render() {
   $('empty').querySelector('p').textContent = rows.length ? '検索条件を変更するか、空行に新しい案件を入力できます。' : '「編集」を押して空行に入力してください。案件名を入力すると保存され、次の空行が表示されます。';
   $('empty-sample').hidden = rows.length > 0;
 }
-function openEditor(row = null) {
-  editing = row?.id ?? null; $('order-form').reset(); $('form-error').textContent = '';
-  $('dialog-title').textContent = row ? '案件を編集' : '案件を登録'; $('delete').hidden = !row;
+function openEditor(row) {
+  if (!row) return;
+  editing = row.id; $('order-form').reset(); $('form-error').textContent = '';
+  $('dialog-title').textContent = '案件を編集'; $('delete').hidden = false;
   for (const [key, , type] of fields) {
     if (type === 'computed') continue;
     $('field-' + key).value = row ? String(row[key] ?? '') : type === 'paid' ? 'false' : type === 'status' ? statuses[0] : key === 'created' ? localDate() : '';
