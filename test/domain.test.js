@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { profit, totals, monthlyReport, filterRows, validateRows, csv } from '../domain.js';
+import { profit, totals, monthlyReport, parseMonthInput, filterRows, validateRows, csv } from '../domain.js';
 import { server } from '../server.js';
 const a = { id: '1', number: 'S-001', name: '青葉商事', status: '契約済', owner: '佐藤', sales: 240000, cost: 45000, paid: true };
 const b = { ...a, id: '2', number: 'S-002', name: 'カフェ', status: '商談中', sales: 150000, cost: 25000, paid: false };
@@ -46,6 +46,10 @@ test('指定月の範囲集計・単月・年またぎ・うるう年・不正�
   assert.deepEqual(monthlyReport([],'contract','2026-12','2027-01').months.map(m=>m.month),['2026-12','2027-01']);
   assert.equal(monthlyReport([{...a,contract:'2028-02-29'}],'contract','2028-02','2028-02').sales,240000);
   for (const [start,end] of [['','2027-01'],['2027-13','2027-14'],['2027-03','2027-01'],['2026-01','2036-01']]) assert.throws(()=>monthlyReport([], 'contract', start, end));
+});
+test('手入力の年月を正規化し不正な月を拒否', () => {
+  for (const value of ['2026/1','2026-01','2026年1月','２０２６／０１',' 2026/01 ']) assert.equal(parseMonthInput(value),'2026-01');
+  for (const value of ['2026/00','2026/13','26/10','','2026/1/1','2026/1abc']) assert.throws(()=>parseMonthInput(value));
 });
 test('CSVの18列、引用符、数式の無効化と入金表示', () => {
   const output = csv([{ ...a, name: '=HYPERLINK("x")', note: '複数\n行,備考' }]);

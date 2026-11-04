@@ -1,4 +1,4 @@
-import { statuses, fields, profit, monthlyReport, filterRows, validateRows, csv } from './domain.js';
+import { statuses, fields, profit, monthlyReport, parseMonthInput, filterRows, validateRows, csv } from './domain.js';
 const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
 let reportRange = { start: '2026-10', end: '2027-09', basis: 'contract' };
@@ -43,7 +43,7 @@ function save(next, restoring = false, redraw = true) {
 }
 function option(select, value, label = value) { const o = document.createElement('option'); o.value = value; o.textContent = label; select.append(o); }
 statuses.forEach(s => option($('status-filter'), s));
-$('period-start').value = reportRange.start; $('period-end').value = reportRange.end; $('date-basis').value = reportRange.basis;
+$('period-start').value = reportRange.start.replace('-', '/'); $('period-end').value = reportRange.end.replace('-', '/'); $('date-basis').value = reportRange.basis;
 $('today').textContent = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }).format(new Date());
 for (const [key, label, type] of fields) {
   const th = document.createElement('th'); th.textContent = label; if (type === 'number' || type === 'computed') th.className = 'numeric'; $('columns').append(th);
@@ -94,18 +94,25 @@ function refreshTotals() {
   $('monthly-note').textContent = `対象：${periodText}（開始月の初日から終了月の末日まで） ／ ${basisText}基準。日付未入力・期間外の${report.excluded}件は集計対象外です。ステータスにかかわらず登録金額を集計します。`;
 }
 function applyPeriod() {
-  const next = { start: $('period-start').value, end: $('period-end').value, basis: $('date-basis').value };
   try {
+    const next = { start: parseMonthInput($('period-start').value), end: parseMonthInput($('period-end').value), basis: $('date-basis').value };
     monthlyReport([], next.basis, next.start, next.end);
     reportRange = next; $('period-error').textContent = '';
+    $('period-start').value = next.start.replace('-', '/'); $('period-end').value = next.end.replace('-', '/');
     try { localStorage.setItem(reportKey, JSON.stringify(next)); } catch { /* Calculation still works when preferences cannot be persisted. */ }
     refreshTotals();
   } catch (e) { $('period-error').textContent = e.message + ' 合計は直前の有効な期間を表示しています。'; }
 }
 for (const id of ['period-start','period-end','date-basis']) $(id).addEventListener('change', applyPeriod);
+for (const id of ['period-start','period-end']) $(id).addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); applyPeriod(); } });
 $('period-reset').addEventListener('click', () => { $('period-start').value = '2026-10'; $('period-end').value = '2027-09'; applyPeriod(); });
 try { $('monthly-panel').open = localStorage.getItem('order-desk:monthly-open') === 'true'; } catch { /* Defaults to collapsed. */ }
 $('monthly-panel').addEventListener('toggle', () => { try { localStorage.setItem('order-desk:monthly-open', String($('monthly-panel').open)); } catch { /* Display remains usable. */ } });
+try { $('orders-panel').open = localStorage.getItem('order-desk:orders-open') !== 'false'; } catch { /* Defaults to open. */ }
+$('orders-panel').addEventListener('toggle', () => {
+  try { localStorage.setItem('order-desk:orders-open', String($('orders-panel').open)); } catch { /* Display remains usable. */ }
+  if ($('orders-panel').open) scheduleListHeight();
+});
 function drawCell(td, row, field) {
   const [key, label, type] = field;
   const isDraft = isDraftRow(row.id);
@@ -305,4 +312,20 @@ function sample() {
 }
 ['sample','empty-sample'].forEach(id => $(id).addEventListener('click', sample));
 window.addEventListener('storage', e => { if (e.key === storageKey || e.key === draftKey) location.reload(); });
+// Measure actual row heights so wrapped text and validation messages also respect the 30-row limit.
+let listHeightFrame = null;
+function scheduleListHeight() {
+  if (listHeightFrame !== null) return;
+  listHeightFrame = requestAnimationFrame(() => {
+    listHeightFrame = null;
+    const table = $('orders-table'), viewport = $('orders-scroll'), limit = $('rows').children[29];
+    if (!table.getClientRects().length) return;
+    if (!limit) { viewport.style.maxHeight = 'none'; return; }
+    const height = limit.getBoundingClientRect().bottom - table.getBoundingClientRect().top;
+    const scrollbar = viewport.offsetHeight - viewport.clientHeight;
+    viewport.style.maxHeight = `${height + scrollbar}px`;
+  });
+}
+new ResizeObserver(scheduleListHeight).observe($('orders-table'));
+new MutationObserver(scheduleListHeight).observe($('orders-table'), { childList:true, subtree:true, characterData:true });
 render();

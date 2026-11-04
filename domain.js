@@ -8,6 +8,11 @@ export const fields = [
 ];
 export function profit(row) { return Number(row.sales || 0) - Number(row.cost || 0); }
 export function totals(rows) { return rows.reduce((t, r) => ({ sales: t.sales + Number(r.sales || 0), profit: t.profit + profit(r), unpaid: t.unpaid + (r.paid ? 0 : Number(r.sales || 0)) }), { sales: 0, profit: 0, unpaid: 0 }); }
+export function parseMonthInput(value) {
+  const match = String(value ?? '').normalize('NFKC').trim().match(/^([1-9]\d{3})(?:\/|-|年)(\d{1,2})月?$/);
+  if (!match || Number(match[2]) < 1 || Number(match[2]) > 12) throw new Error('年月は「2026/10」のように入力してください。');
+  return `${match[1]}-${match[2].padStart(2,'0')}`;
+}
 export function monthlyReport(rows, dateKey = 'contract', start = '2026-10', end = '2027-09') {
   const monthIndex = value => {
     if (typeof value !== 'string' || !/^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(value)) throw new Error('開始月と終了月を入力してください。');

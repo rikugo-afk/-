@@ -12,3 +12,9 @@
 #monthly-panel>summary{cursor:pointer;list-style:none;margin:0}#monthly-panel>summary::-webkit-details-marker{display:none}#monthly-panel>summary:hover{background:#f6faf7;border-radius:10px}.monthly-toggle{font-size:11px;color:#58886d;white-space:nowrap}.monthly-toggle::before{content:'開く ＋'}#monthly-panel[open] .monthly-toggle::before{content:'閉じる −'}#monthly-panel>summary:focus-visible{outline:3px solid #64b7a4;outline-offset:2px}
 
 .row-delete{font-size:11px;padding:6px 10px;margin-left:8px}.draft-hint+.row-delete{margin-left:12px}
+
+.orders-scroll{max-height:2000px;overflow:auto;scroll-padding-top:50px;min-height:0}.orders-scroll thead th{position:sticky;top:0;z-index:3;box-shadow:0 1px 0 #dfe7e1;background:#f7f9f8}.orders-scroll tbody td{scroll-margin-top:50px}
+
+#period-input-hint{font-size:10px;color:#8b9e91;margin-top:12px}.period-inputs input[type=text]{width:155px}
+
+#orders-panel>summary{cursor:pointer;list-style:none}#orders-panel>summary::-webkit-details-marker{display:none}#orders-panel>summary:hover{background:#f6faf7;border-radius:10px}.orders-toggle{font-size:11px;color:#58886d;white-space:nowrap}.orders-toggle::before{content:'開く ＋'}#orders-panel[open] .orders-toggle::before{content:'閉じる −'}#orders-panel>summary:focus-visible{outline:3px solid #64b7a4;outline-offset:2px}.order-toolbar{padding:0 25px 18px;justify-content:flex-end}@media(max-width:760px){.order-toolbar{padding:0 16px 18px}}
