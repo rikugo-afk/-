@@ -1,4 +1,4 @@
-import { statuses, owners, sources, permits, fields, profit, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, hasAllOrderFields, sortRows, normalizeSalesNumbers, allocateBrkNumbers } from './domain.js';
+import { statuses, owners, sources, permits, fields, profit, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, hasAllOrderFields, sortRows, normalizeSalesNumbers, allocateBrkNumbers, missingSignedFields } from './domain.js';
 const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
 const developmentKey = 'order-desk:development:v1', developmentStatuses = ['未着手','進行中','確認待ち','完了'];
@@ -15,8 +15,24 @@ let editSession = null, sessionHistory = [], externalChange = false;
 let sortKey = null, sortDirection = 'asc';
 let currentView = ['#completed','#development'].includes(location.hash) ? location.hash.slice(1) : 'orders';
 function belongsCompleted(row) { return editSession ? editSession.completedIds.has(row.id) : isOrderComplete(row); }
-function workspaceRows() { return rows.filter(r => belongsCompleted(r) === (currentView !== 'orders')); }
+function belongsDevelopment(row) { return editSession ? editSession.signedIds.has(row.id) : row.status==='契約済'; }
+function workspaceRows() { return rows.filter(r => currentView==='development'?belongsDevelopment(r):belongsCompleted(r)===(currentView==='completed')); }
 function captureState() { return JSON.stringify({ rows, drafts, development }); }
+function showMovement(previous, next) {
+  const old=new Map(previous.map(r=>[r.id,r]));
+  const completed=next.filter(r=>isOrderComplete(r)&&(!old.has(r.id)||!isOrderComplete(old.get(r.id))));
+  const signed=next.filter(r=>r.status==='契約済'&&old.get(r.id)?.status!=='契約済');
+  const returned=next.filter(r=>!isOrderComplete(r)&&old.has(r.id)&&isOrderComplete(old.get(r.id)));
+  if(!completed.length&&!returned.length&&!signed.length)return;
+  const describe=list=>list.slice(0,3).map(r=>`営業No.${r.number}「${r.name}」`).join('、')+(list.length>3?` ほか${list.length-3}件`:'');
+  const messages=[];
+  const completedIds=new Set(completed.map(r=>r.id));
+  if(completed.length)messages.push(`${describe(completed)}（${completed.length}件）を受注完了に移動しました。開発進捗にも表示されます。`);
+  const signedOnly=signed.filter(r=>!completedIds.has(r.id));if(signedOnly.length)messages.push(`${describe(signedOnly)}（${signedOnly.length}件）を開発進捗に移動しました。`);
+  if(returned.length)messages.push(`${describe(returned)}（${returned.length}件）を受注管理に戻しました。`);
+  $('movement-text').textContent=messages.join(' ');$('movement-message').hidden=false;
+  $('movement-completed').hidden=!completed.length;$('movement-development').hidden=!completed.length&&!signed.length;$('movement-orders').hidden=!returned.length;
+}
 function updateUndoButton() { const count=(editSession?sessionHistory:undoHistory).length; for (const id of ['undo','undo-development']) { $(id).disabled = count === 0; $(id).title = `操作を元に戻します（履歴${count}件）`; } }
 function recordUndo(before) {
   if (!historyReady || before === captureState()) return;
@@ -91,16 +107,19 @@ function save(next, restoring = false, redraw = true) {
     localStorage.setItem(storageKey, JSON.stringify(clean));
   } catch { throw new Error('保存できません。ブラウザーの保存容量・設定を確認してください。'); }
   lastSerial=serial; lastBrk=brkSequence;
-  const before = captureState(); rows = clean; recordUndo(before); storageBroken = false; if (redraw) render(); else refreshTotals();
+  const before = captureState(), previous=rows; rows = clean; recordUndo(before); storageBroken = false; if (redraw) render(); else refreshTotals();
+  if(!editSession)showMovement(previous,clean);
 }
 function option(select, value, label = value) { const o = document.createElement('option'); o.value = value; o.textContent = label; select.append(o); }
 function ownerOptions(select, current = '') {
   select.replaceChildren(); option(select, '', '未選択'); owners.forEach(name => option(select, name));
   if (current && !owners.includes(current)) option(select, current, `${current}（既存の担当者）`);
 }
-function statusOptions(select, current = '', allowEmpty = false) {
+function statusOptions(select, current = '', allowEmpty = false, row = {}) {
   select.replaceChildren(); if (allowEmpty) option(select, '', '未選択'); statuses.forEach(name => option(select, name));
   if (current && !statuses.includes(current)) option(select, current, `${current}（既存のステータス）`);
+  const missing=missingSignedFields(row),signed=[...select.options].find(o=>o.value==='契約済');
+  signed.disabled=missing.length>0;signed.title=missing.length?'先に入力：'+missing.join('・'):'';
 }
 function sourceOptions(select, current = '') {
   select.replaceChildren(); option(select, '', '未選択'); sources.forEach(name => option(select, name));
@@ -158,7 +177,7 @@ function visible() { return sortRows(filterRows(workspaceRows(), $('search').val
 function refreshTotals() {
   $('nav-orders-count').textContent = rows.filter(r => !belongsCompleted(r)).length;
   $('nav-completed-count').textContent = rows.filter(belongsCompleted).length;
-  $('nav-development-count').textContent = rows.filter(belongsCompleted).length;
+  $('nav-development-count').textContent = rows.filter(belongsDevelopment).length;
   const report = monthlyReport(workspaceRows(), reportRange.basis, reportRange.start, reportRange.end);
   const formatMonth = value => `${value.slice(0,4)}年${Number(value.slice(5))}月`;
   const periodText = `${formatMonth(reportRange.start)}〜${formatMonth(reportRange.end)}`;
@@ -273,7 +292,7 @@ function editCell(td, rowId, field) {
   if (type === 'permit') permitOptions(input, row[key]);
   else if (type === 'owner') ownerOptions(input, row[key]);
   else if (type === 'source') sourceOptions(input, row[key]);
-  else if (type === 'status') statusOptions(input, row[key], isDraft);
+  else if (type === 'status') statusOptions(input, row[key], isDraft, row);
   else if (type === 'paid') { option(input, 'false', '未入金'); option(input, 'true', '入金済'); }
   else if (type !== 'textarea') input.type = type === 'date' ? 'text' : type;
   input.value = type === 'date' ? String(row[key] || '').replaceAll('-','') : String(row[key] ?? ''); input.className = 'cell-input'; input.setAttribute('aria-label', `${label}を入力`);
@@ -282,6 +301,7 @@ function editCell(td, rowId, field) {
   if (type === 'number') { input.min = '0'; input.step = '1'; input.placeholder='金額を入力'; if(input.value==='0')input.value=''; }
   const error = document.createElement('span'); error.className = 'cell-error'; error.setAttribute('role','alert');
   const errorId = `cell-error-${rowId}-${key}`; error.id = errorId; input.setAttribute('aria-describedby', errorId);
+  if(type==='status'&&missingSignedFields(row).length)error.textContent='「契約済」を選ぶ前に入力：'+missingSignedFields(row).join('・');
   let finished = false;
   function close() { finished = true; activeCell = null; td.classList.remove('cell-editing'); drawCell(td, findRow(rowId), field); }
   function commit() {
@@ -290,6 +310,7 @@ function editCell(td, rowId, field) {
       if (!input.checkValidity()) throw new Error(input.validationMessage);
       const value = type === 'date' ? parseDateInput(input.value) : input.value === '' && (isDraft || ['number','paid'].includes(type)) ? '' : type === 'number' ? Number(input.value) : type === 'paid' ? input.value === 'true' : input.value.trim();
       const current = findRow(rowId);
+      if(key==='status'&&value==='契約済'&&current.status!=='契約済'&&missingSignedFields(current).length)throw new Error('「契約済」を選ぶ前に入力：'+missingSignedFields(current).join('・'));
       if (current[key] !== value) {
         if (isDraft) {
           if (storageBroken) throw new Error('保存データを読み込めないため保存を停止しています。');
@@ -403,7 +424,7 @@ function render() {
   }
   const completed = currentView !== 'orders', devView = currentView === 'development';
   $('page-title').textContent = devView ? '開発進捗' : completed ? '受注完了' : '受注管理'; $('breadcrumb-title').textContent = $('page-title').textContent;
-  $('page-description').textContent = devView ? '受注完了した案件の開発状況を管理します。' : completed ? '備考以外が入力済みで、ステータスが契約済の案件です。' : '案件の進捗から入金まで、ひとつの場所で。';
+  $('page-description').textContent = devView ? '契約済の案件の開発状況を管理します。' : completed ? '備考以外が入力済みで、ステータスが契約済の案件です。' : '案件の進捗から入金まで、ひとつの場所で。';
   for (const view of ['orders','completed','development']) { $('nav-' + view).classList.toggle('active', currentView === view); $('nav-' + view).setAttribute('aria-current', currentView === view ? 'page' : 'false'); }
   $('orders-panel').hidden = devView; $('development-panel').hidden = !devView;
   if (devView) renderDevelopment();
@@ -438,6 +459,10 @@ function selectWorkspace(view) {
 $('nav-orders').addEventListener('click', () => selectWorkspace('orders'));
 $('nav-completed').addEventListener('click', () => selectWorkspace('completed'));
 $('nav-development').addEventListener('click', () => selectWorkspace('development'));
+$('movement-completed').addEventListener('click',()=>selectWorkspace('completed'));
+$('movement-development').addEventListener('click',()=>selectWorkspace('development'));
+$('movement-orders').addEventListener('click',()=>selectWorkspace('orders'));
+$('movement-close').addEventListener('click',()=>{$('movement-message').hidden=true;});
 function developmentEntry(id) { return Object.hasOwn(development, id) ? development[id] : { status:'未着手', note:'' }; }
 function saveDevelopment(id, patch) {
   if (developmentBroken) throw new Error('開発進捗を読み込めないため、保存を停止しています。');
@@ -448,9 +473,9 @@ function saveDevelopment(id, patch) {
 function renderDevelopment() {
   $('edit-development').textContent = tableEditing ? '✓ 保存' : '✎ 編集'; $('edit-development').setAttribute('aria-pressed', String(tableEditing));
   $('save-state-development').textContent=editSession?'編集中・未保存：「保存」で確定します。':'保存済み';
-  $('development-rows').replaceChildren(); const projects = rows.filter(belongsCompleted);
+  $('development-rows').replaceChildren(); const projects = rows.filter(belongsDevelopment);
   $('development-empty').hidden = projects.length > 0;
-  $('development-note').textContent = developmentBroken ? '開発進捗の保存データを読み込めません。データ保護のため編集を停止しています。' : '受注完了した案件を自動表示します。「編集」を押して開発状況と備考を記録してください。';
+  $('development-note').textContent = developmentBroken ? '開発進捗の保存データを読み込めません。データ保護のため編集を停止しています。' : '契約済で保存した案件を自動表示します。「編集」を押して開発状況と備考を記録してください。';
   for (const row of projects) {
     const tr = document.createElement('tr'); tr.dataset.id = row.id;
     for (const text of [row.number, row.name, row.owner]) { const td = document.createElement('td'); td.textContent = text; tr.append(td); }
@@ -472,17 +497,27 @@ function openEditor(row) {
     if (type === 'owner') ownerOptions($('field-owner'), row.owner);
     if (type === 'source') sourceOptions($('field-source'), row.source);
     if (type === 'permit') permitOptions($('field-permit'), row.permit);
-    if (type === 'status') statusOptions($('field-status'), row.status);
+    if (type === 'status') statusOptions($('field-status'), row.status, false, row);
     $('field-' + key).value = type === 'date' ? formatDate(row[key]) : String(row[key] ?? '');
     $('field-' + key).setCustomValidity('');
   }
   updateProfit(); $('editor').showModal();
+  updateSignedEligibility();
 }
+function formCandidate() {
+  const row={};for(const [key,,type] of fields.slice(0,11)){let value=$('field-'+key).value.trim();if(type==='date'){try{value=parseDateInput(value);}catch{value='';}}row[key]=value;}return row;
+}
+function updateSignedEligibility() {
+  const missing=missingSignedFields(formCandidate()),choice=[...$('field-status').options].find(o=>o.value==='契約済');
+  choice.disabled=missing.length>0;choice.title=missing.length?'先に入力：'+missing.join('・'):'';
+  $('signed-hint').textContent=missing.length?'「契約済」を選ぶ前に入力：'+missing.join('・'):'';
+}
+$('order-form').addEventListener('input',updateSignedEligibility);$('order-form').addEventListener('change',updateSignedEligibility);
 function toggleEditing() {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
   if (!editSession) {
     if(storageBroken){toast('保存データを読み込めないため編集を開始できません');return;}
-    editSession={before:captureState(),completedIds:new Set(rows.filter(isOrderComplete).map(r=>r.id))}; sessionHistory=[];externalChange=false;tableEditing=true;render();return;
+    editSession={before:captureState(),completedIds:new Set(rows.filter(isOrderComplete).map(r=>r.id)),signedIds:new Set(rows.filter(r=>r.status==='契約済').map(r=>r.id))}; sessionHistory=[];externalChange=false;tableEditing=true;render();return;
   }
   try {
     if(externalChange)throw new Error('別のタブでデータが変更されています。上書きを防ぐため保存を停止しています。');
@@ -498,6 +533,7 @@ function toggleEditing() {
       for(const [key,value] of values)localStorage.setItem(key,value);
     } catch(error) { try { for(const [key,value] of old)if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value); } catch {storageBroken=true;} throw error; }
     const before=editSession.before; rows=clean;drafts=pending;lastSerial=highestSerial([...clean,...pending]);lastBrk=allocated.last;editSession=null;sessionHistory=[];tableEditing=false;recordUndo(before);render();
+    showMovement(previous.rows,clean);
     toast('保存しました。入力状況に応じて案件の表示先を更新しました');
   } catch(e) {toast(e instanceof MoveBackCancelled ? '移動をキャンセルしました。編集を続けるか「元に戻す」で修正してください。' : '保存できません：'+e.message);}
 }
@@ -526,8 +562,9 @@ function undoLastOperation() {
       } catch { storageBroken = true; }
       throw error;
     }
-    rows = restoredRows; drafts = target.drafts; development = target.development; undoHistory.pop();
+    const previousRows=rows;rows = restoredRows; drafts = target.drafts; development = target.development; undoHistory.pop();
     render(); toast('保存済みの操作を1つ元に戻しました');
+    showMovement(previousRows,restoredRows);
   } catch (e) { toast(e instanceof MoveBackCancelled ? e.message : '元に戻せませんでした。ブラウザーの保存容量・設定を確認してください。'); }
 }
 $('undo').addEventListener('click',undoLastOperation); $('undo-development').addEventListener('click',undoLastOperation);
@@ -546,6 +583,7 @@ $('order-form').addEventListener('submit', e => {
   try {
   const row = { id: editing || crypto.randomUUID() };
   for (const [key, , type] of fields) { if (type !== 'computed') { const v = $('field-' + key).value; row[key] = type === 'date' ? parseDateInput(v) : v === '' && ['number','paid'].includes(type) ? '' : type === 'number' ? Number(v) : type === 'paid' ? v === 'true' : v.trim(); } }
+  if(row.status==='契約済'&&rows.find(r=>r.id===editing)?.status!=='契約済'&&missingSignedFields(row).length)throw new Error('「契約済」を選ぶ前に入力：'+missingSignedFields(row).join('・'));
   save(editing ? rows.map(r => r.id === editing ? row : r) : [row, ...rows]); $('editor').close(); toast(editSession ? '変更を反映しました。一覧上部の「保存」で確定してください' : '案件を保存しました'); }
   catch (error) { $('form-error').textContent = error.message; }
 });

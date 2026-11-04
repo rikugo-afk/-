@@ -38,6 +38,9 @@ export function hasAllOrderFields(row) {
   });
 }
 export function isOrderComplete(row) { return row.status === '契約済' && hasAllOrderFields(row); }
+export function missingSignedFields(row) {
+  return fields.slice(0,11).filter(([key])=>key!=='status'&&(typeof row[key]!=='string'||!row[key].trim())).map(([,label])=>label);
+}
 export function totals(rows) { return rows.reduce((t, r) => ({ sales: t.sales + Number(r.sales || 0), profit: t.profit + profit(r), unpaid: t.unpaid + (r.paid ? 0 : Number(r.sales || 0)) }), { sales: 0, profit: 0, unpaid: 0 }); }
 export function parseMonthInput(value) {
   const text=String(value??'').normalize('NFKC').trim();
