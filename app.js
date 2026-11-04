@@ -1,6 +1,12 @@
 import { statuses, fields, profit, monthlyReport, filterRows, validateRows, csv } from './domain.js';
 const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
+let reportRange = { start: '2026-10', end: '2027-09', basis: 'contract' };
+const reportKey = 'order-desk:report:v1';
+try {
+  const saved = JSON.parse(localStorage.getItem(reportKey));
+  if (saved && ['contract','paymentDate'].includes(saved.basis)) { monthlyReport([], saved.basis, saved.start, saved.end); reportRange = saved; }
+} catch { /* Invalid display preferences do not affect order data. */ }
 const yen = value => '¥' + Number(value).toLocaleString('ja-JP');
 const localDate = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const draftKey = 'order-desk:draft:v1';
@@ -37,6 +43,7 @@ function save(next, restoring = false, redraw = true) {
 }
 function option(select, value, label = value) { const o = document.createElement('option'); o.value = value; o.textContent = label; select.append(o); }
 statuses.forEach(s => option($('status-filter'), s));
+$('period-start').value = reportRange.start; $('period-end').value = reportRange.end; $('date-basis').value = reportRange.basis;
 $('today').textContent = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }).format(new Date());
 for (const [key, label, type] of fields) {
   const th = document.createElement('th'); th.textContent = label; if (type === 'number' || type === 'computed') th.className = 'numeric'; $('columns').append(th);
@@ -60,8 +67,14 @@ function updateProfit() { $('field-profit').value = yen(Number($('field-sales').
 ['sales','cost'].forEach(k => $('field-' + k).addEventListener('input', updateProfit));
 function visible() { return filterRows(rows, $('search').value, $('status-filter').value, $('payment-filter').value); }
 function refreshTotals() {
-  const report = monthlyReport(rows, $('date-basis').value);
-  $('count').textContent = rows.length; for (const k of ['sales', 'profit', 'unpaid']) $(k).textContent = yen(report[k]);
+  const report = monthlyReport(rows, reportRange.basis, reportRange.start, reportRange.end);
+  const formatMonth = value => `${value.slice(0,4)}年${Number(value.slice(5))}月`;
+  const periodText = `${formatMonth(reportRange.start)}〜${formatMonth(reportRange.end)}`;
+  const basisText = reportRange.basis === 'contract' ? '契約予定日（締結日）' : '(契)入金日';
+  $('period-summary').textContent = `${periodText} ／ ${basisText}基準`;
+  $('monthly-period').textContent = periodText; $('monthly-description').textContent = `${report.months.length}か月の売上と利益を確認`;
+  $('monthly-region').setAttribute('aria-label', periodText + 'の月別売上と粗利');
+  $('count').textContent = report.included.length; for (const k of ['sales', 'profit', 'unpaid']) $(k).textContent = yen(report[k]);
   const max = Math.max(1, ...report.months.flatMap(m => [m.sales, Math.abs(m.profit)]));
   $('monthly-rows').replaceChildren();
   for (const m of report.months) {
@@ -78,9 +91,21 @@ function refreshTotals() {
   }
   $('monthly-total-count').textContent = `${report.included.length}件`;
   $('monthly-total-sales').textContent = yen(report.sales); $('monthly-total-cost').textContent = yen(report.sales - report.profit); $('monthly-total-profit').textContent = yen(report.profit);
-  $('monthly-note').textContent = `対象：2026年10月1日〜2027年9月30日 ／ ${$('date-basis').selectedOptions[0].textContent}基準。日付未入力・期間外の${report.excluded}件は集計対象外です。ステータスにかかわらず登録金額を集計します。`;
+  $('monthly-note').textContent = `対象：${periodText}（開始月の初日から終了月の末日まで） ／ ${basisText}基準。日付未入力・期間外の${report.excluded}件は集計対象外です。ステータスにかかわらず登録金額を集計します。`;
 }
-$('date-basis').addEventListener('change', refreshTotals);
+function applyPeriod() {
+  const next = { start: $('period-start').value, end: $('period-end').value, basis: $('date-basis').value };
+  try {
+    monthlyReport([], next.basis, next.start, next.end);
+    reportRange = next; $('period-error').textContent = '';
+    try { localStorage.setItem(reportKey, JSON.stringify(next)); } catch { /* Calculation still works when preferences cannot be persisted. */ }
+    refreshTotals();
+  } catch (e) { $('period-error').textContent = e.message + ' 合計は直前の有効な期間を表示しています。'; }
+}
+for (const id of ['period-start','period-end','date-basis']) $(id).addEventListener('change', applyPeriod);
+$('period-reset').addEventListener('click', () => { $('period-start').value = '2026-10'; $('period-end').value = '2027-09'; applyPeriod(); });
+try { $('monthly-panel').open = localStorage.getItem('order-desk:monthly-open') === 'true'; } catch { /* Defaults to collapsed. */ }
+$('monthly-panel').addEventListener('toggle', () => { try { localStorage.setItem('order-desk:monthly-open', String($('monthly-panel').open)); } catch { /* Display remains usable. */ } });
 function drawCell(td, row, field) {
   const [key, label, type] = field;
   const isDraft = isDraftRow(row.id);
@@ -179,8 +204,25 @@ function editCell(td, rowId, field) {
 }
 function drawActions(td, row) {
   td.replaceChildren();
-  if (isDraftRow(row.id)) { const hint = document.createElement('span'); hint.className = 'draft-hint'; hint.textContent = '新規入力行'; td.append(hint); return; }
-  const details = document.createElement('button'); details.className = 'row-details'; details.textContent = '詳細'; details.setAttribute('aria-label', `${row.number}の詳細を開く`); details.addEventListener('click', () => { if (!activeCell || activeCell.commit()) openEditor(rows.find(r => r.id === row.id)); }); td.append(details);
+  if (isDraftRow(row.id)) { const hint = document.createElement('span'); hint.className = 'draft-hint'; hint.textContent = '新規入力行'; td.append(hint); }
+  else { const details = document.createElement('button'); details.className = 'row-details'; details.textContent = '詳細'; details.setAttribute('aria-label', `${row.number}の詳細を開く`); details.addEventListener('click', () => { if (!activeCell || activeCell.commit()) openEditor(rows.find(r => r.id === row.id)); }); td.append(details); }
+  if (tableEditing) {
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'row-delete danger'; remove.textContent = '行を削除'; remove.setAttribute('aria-label', `${isDraftRow(row.id) ? '空行' : row.number}を削除`);
+    remove.addEventListener('click', () => deleteTableRow(row.id)); td.append(remove);
+  }
+}
+function deleteTableRow(id) {
+  if (!tableEditing) return;
+  if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
+  const row = findRow(id); if (!row) return;
+  const pending = isDraftRow(id);
+  const hasContent = fields.some(([k,,t]) => t !== 'computed' && row[k] !== '');
+  if ((!pending || hasContent) && !confirm(`${pending ? '下書き' : row.number + '：' + row.name}の行を削除しますか？この操作は取り消せません。`)) return;
+  try {
+    if (pending) { const next = drafts.filter(r => r.id !== id); persistDrafts(next.length ? next : [emptyDraft()]); render(); }
+    else save(rows.filter(r => r.id !== id));
+    toast('行を削除しました');
+  } catch (e) { toast(e.message); }
 }
 function appendDraftRow(draft) {
   const tr = document.createElement('tr'); tr.dataset.id = draft.id; tr.className = 'draft-row';

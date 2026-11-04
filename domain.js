@@ -8,9 +8,17 @@ export const fields = [
 ];
 export function profit(row) { return Number(row.sales || 0) - Number(row.cost || 0); }
 export function totals(rows) { return rows.reduce((t, r) => ({ sales: t.sales + Number(r.sales || 0), profit: t.profit + profit(r), unpaid: t.unpaid + (r.paid ? 0 : Number(r.sales || 0)) }), { sales: 0, profit: 0, unpaid: 0 }); }
-export function monthlyReport(rows, dateKey = 'contract') {
-  const months = Array.from({ length: 12 }, (_, i) => {
-    const month = new Date(Date.UTC(2026, 9 + i, 1)).toISOString().slice(0, 7);
+export function monthlyReport(rows, dateKey = 'contract', start = '2026-10', end = '2027-09') {
+  const monthIndex = value => {
+    if (typeof value !== 'string' || !/^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(value)) throw new Error('開始月と終了月を入力してください。');
+    return Number(value.slice(0,4)) * 12 + Number(value.slice(5)) - 1;
+  };
+  const first = monthIndex(start), last = monthIndex(end);
+  if (last < first) throw new Error('終了月は開始月以降にしてください。');
+  if (last - first >= 120) throw new Error('集計期間は10年以内にしてください。');
+  const months = Array.from({ length: last - first + 1 }, (_, i) => {
+    const index = first + i;
+    const month = `${Math.floor(index / 12)}-${String(index % 12 + 1).padStart(2, '0')}`;
     return { month, rows: [], count: 0, sales: 0, cost: 0, profit: 0, unpaid: 0 };
   });
   const byMonth = new Map(months.map(m => [m.month, m]));

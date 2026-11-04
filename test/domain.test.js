@@ -38,6 +38,15 @@ test('復元データの正規化と不正・重複データの拒否', () => {
   for (const patch of [{ sales: -1 }, { cost: 1.5 }, { sales: Infinity }, { folder: 'javascript:alert(1)' }, { map: 'file:///tmp/a' }, { created: '2026-02-30' }, { paid: 'false' }, { name: '' }, { status: 'unknown' }]) assert.throws(() => validateRows([{ ...a, ...patch }]));
   assert.equal(validateRows([{...a, folder: 'https://example.com', contract: '2026-11-04'}])[0].contract, '2026-11-04');
 });
+test('指定月の範囲集計・単月・年またぎ・うるう年・不正な期間', () => {
+  const rows = [{...a,contract:'2027-01-01'}, {...b,contract:'2027-03-31'}, {...a,contract:'2026-12-31'}, {...b,contract:'2027-04-01'}];
+  const r = monthlyReport(rows,'contract','2027-01','2027-03');
+  assert.equal(r.months.length,3); assert.equal(r.sales,390000); assert.equal(r.included.length,2);
+  assert.equal(monthlyReport(rows,'contract','2027-03','2027-03').sales,150000);
+  assert.deepEqual(monthlyReport([],'contract','2026-12','2027-01').months.map(m=>m.month),['2026-12','2027-01']);
+  assert.equal(monthlyReport([{...a,contract:'2028-02-29'}],'contract','2028-02','2028-02').sales,240000);
+  for (const [start,end] of [['','2027-01'],['2027-13','2027-14'],['2027-03','2027-01'],['2026-01','2036-01']]) assert.throws(()=>monthlyReport([], 'contract', start, end));
+});
 test('CSVの18列、引用符、数式の無効化と入金表示', () => {
   const output = csv([{ ...a, name: '=HYPERLINK("x")', note: '複数\n行,備考' }]);
   assert.ok(output.startsWith('\ufeff"営業No."'));
