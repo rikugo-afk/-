@@ -46,3 +46,5 @@
 .signed-hint{color:#9b783c;font-size:11px;line-height:1.8;margin-top:15px}.signed-hint:empty{display:none}
 
 .orders-scroll{scroll-padding-top:40px}.orders-scroll th{padding:10px 12px}.orders-scroll td{height:44px;padding:6px 12px;scroll-margin-top:40px}.orders-scroll td.editable-cell{padding:5px 8px}.orders-scroll .cell-value{padding:4px 5px}.orders-scroll .cell-value.badge{padding:4px 8px}.orders-scroll .cell-input{padding:6px 8px;min-height:30px}.orders-scroll .row-details,.orders-scroll .row-copy,.orders-scroll .row-delete{padding:5px 9px}.orders-scroll .draft-row .cell-value{min-height:28px}.development-scroll td{padding:7px 12px;height:48px}
+
+.filter-select{display:flex;flex-direction:column;gap:6px;font-size:10px;color:#7b9585;min-width:155px}.filters{align-items:flex-end}.filter-select select{width:100%;max-width:none;min-height:38px}.filter-summary{padding:0 25px 12px;font-size:10px;color:#4d8566}@media(max-width:760px){.filter-select{min-width:0;width:calc(50% - 5px)}.filter-select select{max-width:none;width:100%;font-size:11px}.filter-summary{padding:0 16px 12px}}

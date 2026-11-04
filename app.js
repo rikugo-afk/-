@@ -410,9 +410,18 @@ function appendDraftRow(draft) {
   for (const field of fields) { const td = document.createElement('td'); drawCell(td, draft, field); tr.append(td); }
   const actions = document.createElement('td'); drawActions(actions, draft); tr.append(actions); $('rows').append(tr); return tr;
 }
-function updateResultCount() { const count = visible().length; $('visible-count').textContent = count; $('result-count').textContent = `${workspaceRows().length}件中 ${count}件を表示（空行・下書きは件数に含みません）`; }
+function updateResultCount() {
+  const count=visible().length;$('visible-count').textContent=count;$('result-count').textContent=`${workspaceRows().length}件中 ${count}件を表示（空行・下書きは件数に含みません）`;
+  $('filter-summary').textContent=`ステータス：${$('status-filter').value||'すべて'} ／ 入金：${$('payment-filter').value==='paid'?'入金済':$('payment-filter').value==='unpaid'?'未入金':'すべて'} ／ ${count}件を表示`;
+}
+function syncStatusFilter() {
+  const selected=$('status-filter').value; $('status-filter').replaceChildren();option($('status-filter'),'','すべてのステータス');
+  for(const value of new Set([...statuses,...rows.map(r=>r.status)]))option($('status-filter'),value,statuses.includes(value)?value:value+'（既存）');
+  if([...$('status-filter').options].some(o=>o.value===selected))$('status-filter').value=selected;
+}
 function render() {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
+  syncStatusFilter();
   refreshTotals();
   updateUndoButton();
   $('sort-field').value=sortKey||'';$('sort-direction').textContent=sortDirection==='asc'?'昇順 ↑':'降順 ↓';
@@ -588,7 +597,8 @@ $('order-form').addEventListener('submit', e => {
   catch (error) { $('form-error').textContent = error.message; }
 });
 $('delete').addEventListener('click', () => { if (confirm('本当に削除しますか？')) { try { save(rows.filter(r => r.id !== editing)); $('editor').close(); toast('案件を削除しました'); } catch (error) { $('form-error').textContent = error.message; } } });
-for (const id of ['search','status-filter','payment-filter']) $(id).addEventListener('input', render);
+$('search').addEventListener('input',render);
+for (const id of ['status-filter','payment-filter']) $(id).addEventListener('change',render);
 $('reset').addEventListener('click', () => { for (const id of ['search','status-filter','payment-filter']) $(id).value = ''; render(); });
 function download(content, filename, type) { const url = URL.createObjectURL(new Blob([content], { type })); const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 $('export').addEventListener('click', () => download(csv(visible()), `受注一覧_${localDate()}.csv`, 'text/csv;charset=utf-8'));
