@@ -10,8 +10,17 @@ export const fields = [
   ['sales', '営業売上', 'number'], ['cost', 'コスト', 'number'], ['profit', '営業粗利', 'computed'], ['paymentDate', '(契)入金日', 'date'],
   ['paid', '入金確認', 'paid'], ['note', '備考', 'textarea']
 ];
-export function profit(row) { return Number(row.sales || 0) - Number(row.cost || 0); }
-export function isOrderComplete(row) {
+export function profit(row) { return row.sales === '' || row.sales == null || row.cost === '' || row.cost == null ? null : Number(row.sales)-Number(row.cost); }
+export function normalizeSalesNumbers(rows, floor=0) {
+  const candidate=value=>{const m=/^(?:S-)?(\d+)$/.exec(String(value??''));const n=m?Number(m[1]):NaN;return Number.isSafeInteger(n)&&n>0?String(n):null;};
+  let max=rows.reduce((n,r)=>Math.max(n,Number(candidate(r.number)||0)),floor);const used=new Set();
+  return rows.map(row=>{
+    let number=candidate(row.number);
+    if(!number||used.has(number)){max++;if(!Number.isSafeInteger(max))throw new Error('営業No.の採番上限に達しました。');number=String(max);}
+    used.add(number);return number===row.number?row:{...row,number};
+  });
+}
+export function hasAllOrderFields(row) {
   return fields.every(([key,,type]) => {
     if (key === 'note') return true;
     if (type === 'computed') return Number.isFinite(profit(row));
@@ -20,10 +29,12 @@ export function isOrderComplete(row) {
     return typeof row[key] === 'string' && row[key].trim() !== '';
   });
 }
+export function isOrderComplete(row) { return row.status === '契約済' && hasAllOrderFields(row); }
 export function totals(rows) { return rows.reduce((t, r) => ({ sales: t.sales + Number(r.sales || 0), profit: t.profit + profit(r), unpaid: t.unpaid + (r.paid ? 0 : Number(r.sales || 0)) }), { sales: 0, profit: 0, unpaid: 0 }); }
 export function parseMonthInput(value) {
-  const match = String(value ?? '').normalize('NFKC').trim().match(/^([1-9]\d{3})(?:\/|-|年)(\d{1,2})月?$/);
-  if (!match || Number(match[2]) < 1 || Number(match[2]) > 12) throw new Error('年月は「2026/10」のように入力してください。');
+  const text=String(value??'').normalize('NFKC').trim();
+  const match=text.match(/^([1-9]\d{3})(\d{2})$/) || text.match(/^([1-9]\d{3})(?:\/|-|年)(\d{1,2})月?$/);
+  if (!match || Number(match[2]) < 1 || Number(match[2]) > 12) throw new Error('年月は「202610」のように6桁で入力してください。');
   return `${match[1]}-${match[2].padStart(2,'0')}`;
 }
 export function parseDateInput(value) {
@@ -56,7 +67,7 @@ export function monthlyReport(rows, dateKey = 'contract', start = '2026-10', end
     bucket.rows.push(row); bucket.count++; bucket.sales += Number(row.sales || 0); bucket.cost += Number(row.cost || 0); bucket.profit += profit(row); bucket.unpaid += row.paid ? 0 : Number(row.sales || 0);
   }
   const included = months.flatMap(m => m.rows);
-  return { months, included, excluded: rows.length - included.length, ...totals(included) };
+  return { months, included, excluded: rows.length - included.length, cost: included.reduce((sum,r)=>sum+Number(r.cost||0),0), ...totals(included) };
 }
 export function filterRows(rows, query = '', status = '', payment = '') {
   const q = query.trim().toLocaleLowerCase();
@@ -83,11 +94,12 @@ export function validateRows(rows) {
     for (const [key, , type] of fields) {
       if (type === 'computed') continue;
       if (type === 'number') {
-        row[key] = Number(r[key] ?? 0);
+        row[key] = r[key] === '' || r[key] == null ? '' : Number(r[key]);
+        if(row[key] === '') continue;
         if (!Number.isSafeInteger(row[key]) || row[key] < 0) throw new Error('金額には0以上の整数を指定してください。');
       } else if (type === 'paid') {
-        if (typeof r[key] !== 'boolean') throw new Error('入金確認の形式が不正です。');
-        row[key] = r[key];
+        if (r[key] !== '' && r[key] != null && typeof r[key] !== 'boolean') throw new Error('入金確認の形式が不正です。');
+        row[key] = r[key] ?? '';
       } else {
         row[key] = String(r[key] ?? '').trim();
         if (row[key].length > 10000) throw new Error('入力が長すぎます。');
@@ -106,5 +118,5 @@ export function validateRows(rows) {
 }
 export function csv(rows) {
   const cell = value => '"' + String(value).replace(/^[\s]*[=+@-]/, "'$&").replaceAll('"', '""') + '"';
-  return '\ufeff' + [fields.map(([, label]) => cell(label)).join(','), ...rows.map(r => fields.map(([k, , type]) => cell(type === 'computed' ? profit(r) : type === 'paid' ? (r.paid ? '入金済' : '未入金') : (r[k] ?? ''))).join(','))].join('\r\n');
+  return '\ufeff' + [fields.map(([, label]) => cell(label)).join(','), ...rows.map(r => fields.map(([k, , type]) => cell(type === 'computed' ? profit(r) ?? '' : type === 'paid' ? (typeof r.paid !== 'boolean' ? '' : r.paid ? '入金済' : '未入金') : (r[k] ?? ''))).join(','))].join('\r\n');
 }

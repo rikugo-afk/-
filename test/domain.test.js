@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { profit, totals, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, fields, sortRows } from '../domain.js';
+import { profit, totals, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, fields, sortRows, normalizeSalesNumbers } from '../domain.js';
 import { server } from '../server.js';
 const a = { id: '1', number: 'S-001', name: '青葉商事', status: '契約済', owner: '佐藤', sales: 240000, cost: 45000, paid: true };
 const b = { ...a, id: '2', number: 'S-002', name: 'カフェ', status: '商談中', sales: 150000, cost: 25000, paid: false };
@@ -48,7 +48,7 @@ test('指定月の範囲集計・単月・年またぎ・うるう年・不正�
   for (const [start,end] of [['','2027-01'],['2027-13','2027-14'],['2027-03','2027-01'],['2026-01','2036-01']]) assert.throws(()=>monthlyReport([], 'contract', start, end));
 });
 test('手入力の年月を正規化し不正な月を拒否', () => {
-  for (const value of ['2026/1','2026-01','2026年1月','２０２６／０１',' 2026/01 ']) assert.equal(parseMonthInput(value),'2026-01');
+  for (const value of ['202601','２０２６０１','2026/1','2026-01','2026年1月','２０２６／０１',' 2026/01 ']) assert.equal(parseMonthInput(value),'2026-01');
   for (const value of ['2026/00','2026/13','26/10','','2026/1/1','2026/1abc']) assert.throws(()=>parseMonthInput(value));
 });
 test('8桁の日付を正規化して日本語で表示し、存在しない日付を拒否',()=>{
@@ -60,8 +60,23 @@ test('備考以外の入力が揃った案件のみ受注完了とする', () =>
   const complete = { ...a, brk:'800', created:'2026-10-01', contract:'2026-10-01',folder:'https://example.com',permit:'飲食店営業',address:'東京都',map:'https://maps.google.com',source:'紹介',paymentDate:'2026-10-31',note:'' };
   assert.equal(isOrderComplete(complete),true);
   assert.equal(isOrderComplete({...complete, sales:0,cost:0,paid:false}),true);
+  assert.equal(isOrderComplete({...complete,status:'契約締結予定'}),false);
+  assert.equal(isOrderComplete({...complete,status:'破談'}),false);
   for (const [key,,type] of fields) if (key !== 'note' && type !== 'computed') assert.equal(isOrderComplete({...complete,[key]:''}),false,key);
   assert.equal(isOrderComplete({...complete, owner:'  '}),false);
+});
+test('未入力の金額・入金確認は空欄のまま保持し、0円と区別する',()=>{
+  const row=validateRows([{...a,sales:'',cost:'',paid:''}])[0];
+  assert.equal(row.sales,'');assert.equal(row.cost,'');assert.equal(row.paid,'');assert.equal(profit(row),null);assert.equal(isOrderComplete(row),false);
+  const missing=validateRows([{...a,sales:undefined,cost:undefined,paid:undefined}])[0];assert.equal(missing.sales,'');assert.equal(missing.paid,'');
+  const zero=validateRows([{...a,sales:0,cost:0}])[0];assert.equal(zero.sales,0);assert.equal(profit(zero),0);
+  const partial=monthlyReport([{...a,contract:'2026-10-01',sales:100,cost:''}]);assert.equal(partial.cost,0);assert.equal(partial.profit,0);
+});
+test('営業No.は数字のみへ揃え、重複を避けて案件IDを保持',()=>{
+  const data=[{id:'a',number:'S-001'},{id:'b',number:'S-010'},{id:'c',number:'1'},{id:'d',number:'OLD-A'}];
+  const result=normalizeSalesNumbers(data,12);
+  assert.deepEqual(result.map(r=>r.number),['1','10','13','14']);assert.equal(new Set(result.map(r=>r.number)).size,4);
+  assert.deepEqual(result.map(r=>r.id),data.map(r=>r.id));assert.equal(data[0].number,'S-001');
 });
 test('各項目の並び替えは金額・番号・空欄・粗利・同値を正しく扱う',()=>{
   const rows=[{...a,number:'S-010',sales:100,cost:200,created:'2027-03-01',brk:''},{...b,number:'S-002',sales:20,cost:0,created:'2026-12-01',brk:'801'},{...b,id:'3',number:'S-001',sales:20,cost:0,created:'',brk:'800'}];
