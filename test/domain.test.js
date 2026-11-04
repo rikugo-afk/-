@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { profit, totals, filterRows, validateRows, csv } from '../domain.js';
+import { profit, totals, monthlyReport, filterRows, validateRows, csv } from '../domain.js';
 import { server } from '../server.js';
 const a = { id: '1', number: 'S-001', name: '青葉商事', status: '契約済', owner: '佐藤', sales: 240000, cost: 45000, paid: true };
 const b = { ...a, id: '2', number: 'S-002', name: 'カフェ', status: '商談中', sales: 150000, cost: 25000, paid: false };
@@ -14,6 +14,22 @@ test('検索・ステータス・入金条件を同時に適用', () => {
   assert.deepEqual(filterRows([a,b], '佐藤', '商談中', 'unpaid'), [b]);
   assert.deepEqual(filterRows([a,b], '青葉', '', 'paid'), [a]);
   assert.deepEqual(filterRows([a,b], '存在しない'), []);
+});
+test('2026年10月〜2027年9月の月別売上と粗利・範囲境界・日付基準', () => {
+  const rows = [
+    {...a, contract:'2026-10-01', paymentDate:'2026-11-01'},
+    {...b, contract:'2027-09-30', paymentDate:'2027-10-01'},
+    {...a, contract:'2026-09-30'}, {...b, contract:'2027-10-01'}, {...a, contract:''}
+  ];
+  const r = monthlyReport(rows);
+  assert.equal(r.months.length,12); assert.equal(r.months[0].month,'2026-10'); assert.equal(r.months[11].month,'2027-09');
+  assert.equal(r.months[0].sales,240000); assert.equal(r.months[0].profit,195000);
+  assert.equal(r.months[11].sales,150000); assert.equal(r.months[11].profit,125000);
+  assert.equal(r.months[1].sales,0); assert.equal(r.excluded,3);
+  assert.equal(r.sales,390000); assert.equal(r.profit,320000); assert.equal(r.unpaid,150000);
+  const paid = monthlyReport(rows,'paymentDate'); assert.equal(paid.months[1].sales,240000); assert.equal(paid.sales,240000); assert.equal(paid.excluded,4);
+  assert.equal(monthlyReport([]).months.length,12);
+  assert.equal(monthlyReport([{...b, contract:'2027-01-01',sales:100,cost:200}]).months[3].profit,-100);
 });
 test('復元データの正規化と不正・重複データの拒否', () => {
   assert.equal(validateRows([a])[0].folder, '');

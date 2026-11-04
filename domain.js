@@ -8,6 +8,20 @@ export const fields = [
 ];
 export function profit(row) { return Number(row.sales || 0) - Number(row.cost || 0); }
 export function totals(rows) { return rows.reduce((t, r) => ({ sales: t.sales + Number(r.sales || 0), profit: t.profit + profit(r), unpaid: t.unpaid + (r.paid ? 0 : Number(r.sales || 0)) }), { sales: 0, profit: 0, unpaid: 0 }); }
+export function monthlyReport(rows, dateKey = 'contract') {
+  const months = Array.from({ length: 12 }, (_, i) => {
+    const month = new Date(Date.UTC(2026, 9 + i, 1)).toISOString().slice(0, 7);
+    return { month, rows: [], count: 0, sales: 0, cost: 0, profit: 0, unpaid: 0 };
+  });
+  const byMonth = new Map(months.map(m => [m.month, m]));
+  for (const row of rows) {
+    const bucket = byMonth.get(String(row[dateKey] || '').slice(0, 7));
+    if (!bucket) continue;
+    bucket.rows.push(row); bucket.count++; bucket.sales += Number(row.sales || 0); bucket.cost += Number(row.cost || 0); bucket.profit += profit(row); bucket.unpaid += row.paid ? 0 : Number(row.sales || 0);
+  }
+  const included = months.flatMap(m => m.rows);
+  return { months, included, excluded: rows.length - included.length, ...totals(included) };
+}
 export function filterRows(rows, query = '', status = '', payment = '') {
   const q = query.trim().toLocaleLowerCase();
   return rows.filter(r => (!status || r.status === status) && (!payment || (payment === 'paid' ? r.paid : !r.paid)) && (!q || fields.some(([k]) => String(r[k] ?? '').toLocaleLowerCase().includes(q))));
