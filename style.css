@@ -22,3 +22,5 @@
 .auto-number{color:#8fa497;font-variant-numeric:tabular-nums}#field-number[readonly]{background:#f1f6f2;color:#718e7b}
 
 #field-brk[readonly]{background:#f1f6f2;color:#718e7b}
+
+#undo:disabled{opacity:.45;cursor:default;background:#f7f9f7}

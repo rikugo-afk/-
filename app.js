@@ -1,6 +1,16 @@
 import { statuses, owners, sources, fields, profit, monthlyReport, parseMonthInput, filterRows, validateRows, csv } from './domain.js';
 const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
+const undoHistory = [];
+let historyReady = false;
+function captureState() { return JSON.stringify({ rows, drafts }); }
+function updateUndoButton() { $('undo').disabled = undoHistory.length === 0; $('undo').title = `保存済みの操作を元に戻します（履歴${undoHistory.length}件）`; }
+function recordUndo(before) {
+  if (!historyReady || before === captureState()) return;
+  undoHistory.push(before);
+  while (undoHistory.length > 30 || (undoHistory.length > 1 && undoHistory.reduce((n,s) => n + s.length, 0) > 2500000)) undoHistory.shift();
+  updateUndoButton();
+}
 let reportRange = { start: '2026-10', end: '2027-09', basis: 'contract' };
 const reportKey = 'order-desk:report:v1';
 try {
@@ -28,7 +38,7 @@ function findRow(id) { return rows.find(r => r.id === id) || drafts.find(r => r.
 function persistDrafts(next) {
   if (storageBroken) throw new Error('保存データを読み込めないため保存を停止しています。');
   try { localStorage.setItem(draftKey, JSON.stringify(next)); } catch { throw new Error('下書きを保存できません。ブラウザーの保存容量・設定を確認してください。'); }
-  drafts = next;
+  const before = captureState(); drafts = next; recordUndo(before);
 }
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5000); }
 try { const saved = localStorage.getItem(storageKey); if (saved) rows = validateRows(JSON.parse(saved)); }
@@ -61,7 +71,7 @@ function save(next, restoring = false, redraw = true) {
     localStorage.setItem(brkKey, String(brkSequence)); lastBrk = brkSequence;
     localStorage.setItem(storageKey, JSON.stringify(clean));
   } catch { throw new Error('保存できません。ブラウザーの保存容量・設定を確認してください。'); }
-  rows = clean; storageBroken = false; if (redraw) render(); else refreshTotals();
+  const before = captureState(); rows = clean; recordUndo(before); storageBroken = false; if (redraw) render(); else refreshTotals();
 }
 function option(select, value, label = value) { const o = document.createElement('option'); o.value = value; o.textContent = label; select.append(o); }
 function ownerOptions(select, current = '') {
@@ -264,8 +274,7 @@ function deleteTableRow(id) {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
   const row = findRow(id); if (!row) return;
   const pending = isDraftRow(id);
-  const hasContent = fields.some(([k,,t]) => t !== 'computed' && row[k] !== '');
-  if ((!pending || hasContent) && !confirm(`${pending ? '下書き' : row.number + '：' + row.name}の行を削除しますか？この操作は取り消せません。`)) return;
+  if (!confirm(`本当に削除しますか？\n${pending ? '空行・下書き' : row.number + '：' + row.name}`)) return;
   try {
     if (pending) { const next = drafts.filter(r => r.id !== id); persistDrafts(next.length ? next : [emptyDraft()]); render(); }
     else save(rows.filter(r => r.id !== id));
@@ -281,6 +290,7 @@ function updateResultCount() { const count = visible().length; $('visible-count'
 function render() {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
   refreshTotals();
+  updateUndoButton();
   $('edit-table').textContent = tableEditing ? '✓ 編集を終了' : '✎ 編集'; $('edit-table').setAttribute('aria-pressed', String(tableEditing));
   $('add-row').disabled = !tableEditing;
   $('edit-hint').textContent = tableEditing ? 'Enter / Tabで次の項目 ・ 矢印で上下左右に移動 ・ Shift+Enterで備考を改行 ・ Escで取消 ・ ＋で空行を追加' : '「編集」を押すと空行や既存案件に直接入力できます ・ 下の＋ボタンで行を追加';
@@ -316,6 +326,28 @@ $('edit-table').addEventListener('click', () => {
   tableEditing = !tableEditing; render();
   toast(tableEditing ? '編集モード：セルをクリックして入力できます。変更は自動保存されます' : '編集を終了しました');
 });
+$('undo').addEventListener('click', () => {
+  if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
+  if (!undoHistory.length) return;
+  if (storageBroken) { toast('保存データを読み込めないため、元に戻す操作を停止しています。'); return; }
+  const target = JSON.parse(undoHistory.at(-1));
+  try {
+    const restoredRows = validateRows(target.rows);
+    const oldRows = localStorage.getItem(storageKey), oldDrafts = localStorage.getItem(draftKey);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(restoredRows));
+      localStorage.setItem(draftKey, JSON.stringify(target.drafts));
+    } catch (error) {
+      try {
+        if (oldRows === null) localStorage.removeItem(storageKey); else localStorage.setItem(storageKey, oldRows);
+        if (oldDrafts === null) localStorage.removeItem(draftKey); else localStorage.setItem(draftKey, oldDrafts);
+      } catch { storageBroken = true; }
+      throw error;
+    }
+    rows = restoredRows; drafts = target.drafts; undoHistory.pop();
+    render(); toast('保存済みの操作を1つ元に戻しました');
+  } catch { toast('元に戻せませんでした。ブラウザーの保存容量・設定を確認してください。'); }
+});
 $('add-row').addEventListener('click', () => {
   if (!tableEditing) return;
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
@@ -333,7 +365,7 @@ $('order-form').addEventListener('submit', e => {
   try { save(editing ? rows.map(r => r.id === editing ? row : r) : [row, ...rows]); $('editor').close(); toast('案件を保存しました'); }
   catch (error) { $('form-error').textContent = error.message; }
 });
-$('delete').addEventListener('click', () => { if (confirm('この案件を削除しますか？この操作は取り消せません。')) { try { save(rows.filter(r => r.id !== editing)); $('editor').close(); toast('案件を削除しました'); } catch (error) { $('form-error').textContent = error.message; } } });
+$('delete').addEventListener('click', () => { if (confirm('本当に削除しますか？')) { try { save(rows.filter(r => r.id !== editing)); $('editor').close(); toast('案件を削除しました'); } catch (error) { $('form-error').textContent = error.message; } } });
 for (const id of ['search','status-filter','payment-filter']) $(id).addEventListener('input', render);
 $('reset').addEventListener('click', () => { for (const id of ['search','status-filter','payment-filter']) $(id).value = ''; render(); });
 function download(content, filename, type) { const url = URL.createObjectURL(new Blob([content], { type })); const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
@@ -373,4 +405,5 @@ function scheduleListHeight() {
 new ResizeObserver(scheduleListHeight).observe($('orders-table'));
 new MutationObserver(scheduleListHeight).observe($('orders-table'), { childList:true, subtree:true, characterData:true });
 if (!storageBroken && rows.some(needsBrk)) { try { save(rows, false, false); } catch (e) { toast(e.message); } }
+historyReady = true;
 render();
