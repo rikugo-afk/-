@@ -3,9 +3,23 @@ const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
 const yen = value => '¥' + Number(value).toLocaleString('ja-JP');
 const localDate = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const draftKey = 'order-desk:draft:v1';
+const emptyDraft = () => Object.fromEntries([['id', crypto.randomUUID()], ...fields.filter(([, , t]) => t !== 'computed').map(([k]) => [k, ''])]);
+let draft = emptyDraft();
+function nextNumber() { let n = 1; while (rows.some(r => r.number === `S-${String(n).padStart(3,'0')}`)) n++; return `S-${String(n).padStart(3,'0')}`; }
+function completeDraft(value) { return { ...value, number: value.number || nextNumber(), name: value.name || '下書き', status: value.status || statuses[0], created: value.created || localDate(), sales: Number(value.sales || 0), cost: Number(value.cost || 0), paid: value.paid === true }; }
+function findRow(id) { return rows.find(r => r.id === id) || (draft.id === id ? draft : null); }
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5000); }
 try { const saved = localStorage.getItem(storageKey); if (saved) rows = validateRows(JSON.parse(saved)); }
 catch { storageBroken = true; toast('保存データを読み込めません。バックアップ読込で復元してください。既存データは上書きしていません。'); }
+try {
+  const savedDraft = localStorage.getItem(draftKey);
+  if (savedDraft) {
+    const value = JSON.parse(savedDraft);
+    if (rows.some(r => r.id === value?.id)) localStorage.removeItem(draftKey);
+    else { validateRows([completeDraft(value)]); draft = { ...emptyDraft(), ...value }; }
+  }
+} catch { storageBroken = true; toast('下書きデータを読み込めません。データ保護のため保存を停止しています。'); }
 function save(next, restoring = false, redraw = true) {
   if (storageBroken && !restoring) throw new Error('保存データを読み込めないため保存を停止しています。バックアップから復元してください。');
   const clean = validateRows(next);
@@ -60,14 +74,16 @@ function refreshTotals() {
 $('date-basis').addEventListener('change', refreshTotals);
 function drawCell(td, row, field) {
   const [key, label, type] = field;
+  const isDraft = row.id === draft.id;
   td.replaceChildren(); td.className = ['number','computed'].includes(type) ? 'numeric' : '';
-  if (type === 'computed') { td.textContent = yen(profit(row)); td.classList.add('profit-cell'); td.title = '営業売上 − コスト（自動計算）'; return; }
+  if (type === 'computed') { td.textContent = isDraft && row.sales === '' && row.cost === '' ? '' : yen(profit(row)); td.classList.add('profit-cell'); td.title = '営業売上 − コスト（自動計算）'; return; }
   td.dataset.key = key;
   if (tableEditing) td.classList.add('editable-cell');
   const button = document.createElement(tableEditing ? 'button' : 'span'); button.className = 'cell-value';
-  if (tableEditing) { button.type = 'button'; button.setAttribute('aria-label', `${row.number} ${label}を編集`); button.title = `${label}を直接編集`; }
-  button.textContent = type === 'number' ? yen(row[key]) : type === 'paid' ? (row.paid ? '入金済' : '未入金') : row[key] || '—';
-  if (type === 'status' || type === 'paid') button.classList.add('badge', type === 'paid' ? (row.paid ? 'green' : 'amber') : ['契約済','完了'].includes(row.status) ? 'green' : row.status === '失注' ? 'gray' : 'blue');
+  if (tableEditing) { button.type = 'button'; button.setAttribute('aria-label', `${isDraft ? '空行' : row.number} ${label}を編集`); button.title = `${label}を直接編集`; }
+  button.textContent = isDraft && row[key] === '' ? '' : type === 'number' ? yen(row[key]) : type === 'paid' ? (row.paid ? '入金済' : '未入金') : row[key] || '—';
+  if (isDraft && row[key] === '') { button.classList.add('blank-cell'); if (key === 'name') button.dataset.placeholder = '案件名を入力'; }
+  if ((type === 'status' || type === 'paid') && !(isDraft && row[key] === '')) button.classList.add('badge', type === 'paid' ? (row.paid ? 'green' : 'amber') : ['契約済','完了'].includes(row.status) ? 'green' : row.status === '失注' ? 'gray' : 'blue');
   if (key === 'name') button.classList.add('name-button');
   if (tableEditing) button.addEventListener('click', () => editCell(td, row.id, field)); td.append(button);
   if (type === 'url' && row[key]) { const a = document.createElement('a'); a.href = row[key]; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'cell-link'; a.textContent = '↗'; a.setAttribute('aria-label', `${label}を開く`); td.append(a); }
@@ -75,29 +91,50 @@ function drawCell(td, row, field) {
 function editCell(td, rowId, field) {
   if (!tableEditing) return;
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
-  const row = rows.find(r => r.id === rowId); if (!row) return;
+  const row = findRow(rowId); if (!row) return;
+  const isDraft = rowId === draft.id;
   const [key, label, type] = field;
   const input = document.createElement(type === 'textarea' ? 'textarea' : ['status','paid'].includes(type) ? 'select' : 'input');
+  if (isDraft && ['status','paid'].includes(type)) option(input, '', '未入力');
   if (type === 'status') statuses.forEach(s => option(input, s));
   else if (type === 'paid') { option(input, 'false', '未入金'); option(input, 'true', '入金済'); }
   else if (type !== 'textarea') input.type = type;
   input.value = String(row[key] ?? ''); input.className = 'cell-input'; input.setAttribute('aria-label', `${label}を入力`);
-  if (['number','name','status'].includes(key)) input.required = true;
+  if (!isDraft && ['number','name','status'].includes(key)) input.required = true;
   if (type === 'number') { input.min = '0'; input.step = '1'; }
   const error = document.createElement('span'); error.className = 'cell-error'; error.setAttribute('role','alert');
   const errorId = `cell-error-${rowId}-${key}`; error.id = errorId; input.setAttribute('aria-describedby', errorId);
   let finished = false;
-  function close() { finished = true; activeCell = null; td.classList.remove('cell-editing'); drawCell(td, rows.find(r => r.id === rowId), field); }
+  function close() { finished = true; activeCell = null; td.classList.remove('cell-editing'); drawCell(td, findRow(rowId), field); }
   function commit() {
     if (finished) return true;
     try {
       if (!input.checkValidity()) throw new Error(input.validationMessage);
-      const value = type === 'number' ? Number(input.value) : type === 'paid' ? input.value === 'true' : input.value.trim();
-      const current = rows.find(r => r.id === rowId);
+      const value = isDraft && input.value === '' ? '' : type === 'number' ? Number(input.value) : type === 'paid' ? input.value === 'true' : input.value.trim();
+      const current = findRow(rowId);
       if (current[key] !== value) {
-        save(rows.map(r => r.id === rowId ? { ...r, [key]: value } : r), false, false);
-        const profitCell = td.parentElement.querySelector('.profit-cell'); if (profitCell) profitCell.textContent = yen(profit(rows.find(r => r.id === rowId)));
-        toast('変更を保存しました');
+        if (isDraft) {
+          if (storageBroken) throw new Error('保存データを読み込めないため保存を停止しています。');
+          const next = { ...draft, [key]: value }, candidate = completeDraft(next);
+          validateRows([...rows, candidate]);
+          if (next.name) {
+            save([...rows, candidate], false, false);
+            // The completed row ID also identifies any stale draft after an interrupted cleanup.
+            try { localStorage.removeItem(draftKey); } catch { /* saved row remains authoritative */ }
+            draft = emptyDraft();
+            close();
+            const tr = td.parentElement; tr.classList.remove('draft-row');
+            fields.forEach((f, i) => drawCell(tr.children[i], rows.find(r => r.id === rowId), f));
+            drawActions(tr.lastElementChild, rows.find(r => r.id === rowId)); appendDraftRow(); updateResultCount(); $('empty').hidden = true;
+            toast('案件を保存しました。次の空行にも続けて入力できます'); return true;
+          }
+          try { localStorage.setItem(draftKey, JSON.stringify(next)); } catch { throw new Error('下書きを保存できません。ブラウザーの保存容量・設定を確認してください。'); }
+          draft = next; toast('下書きを保存しました。案件名を入力すると案件として保存されます');
+        } else {
+          save(rows.map(r => r.id === rowId ? { ...r, [key]: value } : r), false, false); toast('変更を保存しました');
+        }
+        const profitCell = td.parentElement.querySelector('.profit-cell'); const changed = findRow(rowId);
+        if (profitCell) profitCell.textContent = changed.id === draft.id && changed.sales === '' && changed.cost === '' ? '' : yen(profit(changed));
       }
       close(); return true;
     } catch (e) { error.textContent = e.message; input.setAttribute('aria-invalid', 'true'); return false; }
@@ -114,27 +151,39 @@ function editCell(td, rowId, field) {
       const cells = [...$('rows').querySelectorAll('.editable-cell')]; const next = cells[cells.indexOf(td) + (e.shiftKey ? -1 : 1)];
       if (!commit()) { e.preventDefault(); input.focus(); }
       else if (next) { e.preventDefault(); const nextRow = next.parentElement.dataset.id; editCell(next, nextRow, fields.find(([k]) => k === next.dataset.key)); }
-      else { e.preventDefault(); td.parentElement.querySelector('.row-details').focus(); }
+      else { e.preventDefault(); const nextCell = td.parentElement.nextElementSibling?.querySelector('.editable-cell button'); (nextCell || $('edit-table')).focus(); }
     }
   });
   input.focus(); if (['text','url','textarea'].includes(type)) input.select();
 }
+function drawActions(td, row) {
+  td.replaceChildren();
+  if (row.id === draft.id) { const hint = document.createElement('span'); hint.className = 'draft-hint'; hint.textContent = '新規入力行'; td.append(hint); return; }
+  const details = document.createElement('button'); details.className = 'row-details'; details.textContent = '詳細'; details.setAttribute('aria-label', `${row.number}の詳細を開く`); details.addEventListener('click', () => { if (!activeCell || activeCell.commit()) openEditor(rows.find(r => r.id === row.id)); }); td.append(details);
+}
+function appendDraftRow() {
+  const tr = document.createElement('tr'); tr.dataset.id = draft.id; tr.className = 'draft-row';
+  for (const field of fields) { const td = document.createElement('td'); drawCell(td, draft, field); tr.append(td); }
+  const actions = document.createElement('td'); drawActions(actions, draft); tr.append(actions); $('rows').append(tr);
+}
+function updateResultCount() { const count = visible().length; $('visible-count').textContent = count; $('result-count').textContent = `${rows.length}件中 ${count}件を表示（空行・下書きは件数に含みません）`; }
 function render() {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
   refreshTotals();
   $('edit-table').textContent = tableEditing ? '✓ 編集を終了' : '✎ 編集'; $('edit-table').setAttribute('aria-pressed', String(tableEditing));
-  $('edit-hint').textContent = tableEditing ? 'セルをクリックして入力 ・ Enter / 移動で保存 ・ Escで取消 ・ Tabで次へ' : '「編集」を押すと一覧で直接入力できます ・ 横スクロールで全項目を表示';
+  $('edit-hint').textContent = tableEditing ? '空行に直接入力 ・ 案件名の入力で保存（営業No.は空欄なら自動採番）・ Enter / 移動で確定 ・ Escで取消' : '「編集」を押すと空行や既存案件に直接入力できます ・ 横スクロールで全項目を表示';
   $('rows').classList.toggle('editing-enabled', tableEditing);
-  const filtered = visible(); $('visible-count').textContent = filtered.length; $('result-count').textContent = `${rows.length}件中 ${filtered.length}件を表示`; $('rows').replaceChildren();
+  const filtered = visible(); updateResultCount(); $('rows').replaceChildren();
   for (const row of filtered) {
     const tr = document.createElement('tr'); tr.dataset.id = row.id;
     for (const field of fields) { const td = document.createElement('td'); drawCell(td, row, field); tr.append(td); }
-    const actions = document.createElement('td'), details = document.createElement('button'); details.className = 'row-details'; details.textContent = '詳細'; details.setAttribute('aria-label', `${row.number}の詳細を開く`); details.addEventListener('click', () => { if (!activeCell || activeCell.commit()) openEditor(rows.find(r => r.id === row.id)); }); actions.append(details); tr.append(actions);
+    const actions = document.createElement('td'); drawActions(actions, row); tr.append(actions);
     $('rows').append(tr);
   }
+  appendDraftRow();
   $('empty').hidden = filtered.length > 0;
-  $('empty').querySelector('h3').textContent = rows.length ? '条件に一致する案件がありません' : '最初の案件を登録しましょう';
-  $('empty').querySelector('p').textContent = rows.length ? '検索条件やフィルターを変更してください。' : '案件情報をまとめて、営業の進捗を見える化。';
+  $('empty').querySelector('h3').textContent = rows.length ? '条件に一致する案件がありません' : '上の空行から入力できます';
+  $('empty').querySelector('p').textContent = rows.length ? '検索条件を変更するか、空行に新しい案件を入力できます。' : '「編集」を押して空行に入力してください。案件名を入力すると保存され、次の空行が表示されます。';
   $('empty-sample').hidden = rows.length > 0;
 }
 function openEditor(row = null) {
@@ -146,18 +195,6 @@ function openEditor(row = null) {
   }
   updateProfit(); $('editor').showModal();
 }
-function addRow() {
-  if (!tableEditing) { openEditor(); return; }
-  if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
-  let n = 1; while (rows.some(r => r.number === `S-${String(n).padStart(3, '0')}`)) n++;
-  const row = { id: crypto.randomUUID(), number: `S-${String(n).padStart(3, '0')}`, name: '新規案件', status: statuses[0], created: localDate(), sales: 0, cost: 0, paid: false };
-  try {
-    save([row, ...rows], false, false);
-    for (const id of ['search','status-filter','payment-filter']) $(id).value = '';
-    render(); const td = $('rows').querySelector('tr [data-key="name"]'); editCell(td, row.id, fields.find(([key]) => key === 'name')); td.scrollIntoView({ block: 'nearest', inline: 'center' }); toast('行を追加しました。案件名などを直接入力できます');
-  } catch (e) { toast(e.message); }
-}
-['add','empty-add'].forEach(id => $(id).addEventListener('click', addRow));
 $('edit-table').addEventListener('click', () => {
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
   tableEditing = !tableEditing; render();
