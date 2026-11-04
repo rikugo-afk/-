@@ -20,3 +20,5 @@
 #orders-panel>summary{cursor:pointer;list-style:none}#orders-panel>summary::-webkit-details-marker{display:none}#orders-panel>summary:hover{background:#f6faf7;border-radius:10px}.orders-toggle{font-size:11px;color:#58886d;white-space:nowrap}.orders-toggle::before{content:'開く ＋'}#orders-panel[open] .orders-toggle::before{content:'閉じる −'}#orders-panel>summary:focus-visible{outline:3px solid #64b7a4;outline-offset:2px}.order-toolbar{padding:0 25px 18px;justify-content:flex-end}@media(max-width:760px){.order-toolbar{padding:0 16px 18px}}
 
 .auto-number{color:#8fa497;font-variant-numeric:tabular-nums}#field-number[readonly]{background:#f1f6f2;color:#718e7b}
+
+#field-brk[readonly]{background:#f1f6f2;color:#718e7b}

@@ -3,7 +3,7 @@ const legacyStatuses = ['商談中', '見積提出', '契約予定', '契約済�
 export const owners = ['藤田', '本間', '高橋', '鈴木', '郷', '菅原', 'OS'];
 export const sources = ['問い合わせ（HP）', '問い合わせ（電話）', '既存オーナー', 'OS交渉による既存オーナー', '新規アプローチ', '紹介'];
 export const fields = [
-  ['number', '営業No.', 'auto'], ['brk', 'BRK', 'text'], ['status', 'ステータス', 'status'], ['owner', '担当者', 'owner'],
+  ['number', '営業No.', 'auto'], ['brk', 'BRK', 'auto'], ['status', 'ステータス', 'status'], ['owner', '担当者', 'owner'],
   ['created', '記入日', 'date'], ['contract', '契約予定日（締結日）', 'date'], ['name', '案件名', 'text'], ['folder', 'フォルダ', 'url'],
   ['permit', '許可種類', 'text'], ['address', '住所', 'text'], ['map', 'Googleマップ', 'url'], ['source', '流入経路', 'source'],
   ['sales', '営業売上', 'number'], ['cost', 'コスト', 'number'], ['profit', '営業粗利', 'computed'], ['paymentDate', '(契)入金日', 'date'],

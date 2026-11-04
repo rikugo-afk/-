@@ -15,6 +15,11 @@ let drafts = [emptyDraft()];
 const isDraftRow = id => drafts.some(r => r.id === id);
 const serialKey = 'order-desk:last-number';
 let lastSerial = 0;
+const brkKey = 'order-desk:last-brk';
+let lastBrk = 799;
+try { const n = Number(localStorage.getItem(brkKey)); if (Number.isSafeInteger(n) && n >= 799) lastBrk = n; } catch { /* Existing BRK values establish the sequence. */ }
+function highestBrk(list) { return list.reduce((max, row) => { const n = /^\d+$/.test(row.brk || '') ? Number(row.brk) : 0; return Number.isSafeInteger(n) ? Math.max(max, n) : max; }, lastBrk); }
+const needsBrk = row => ['契約締結予定','契約済'].includes(row.status) && !row.brk;
 try { const n = Number(localStorage.getItem(serialKey)); if (Number.isSafeInteger(n) && n >= 0) lastSerial = n; } catch { /* Existing rows also establish the sequence. */ }
 function highestSerial(list) { return list.reduce((max, row) => { const m = /^S-(\d+)$/.exec(row.number || ''), n = m ? Number(m[1]) : 0; return Number.isSafeInteger(n) ? Math.max(max, n) : max; }, lastSerial); }
 function nextNumber() { const n = highestSerial(rows) + 1; if (!Number.isSafeInteger(n)) throw new Error('営業No.の採番上限に達しました。'); return `S-${String(n).padStart(3,'0')}`; }
@@ -29,6 +34,7 @@ function toast(message) { $('toast').textContent = message; $('toast').hidden = 
 try { const saved = localStorage.getItem(storageKey); if (saved) rows = validateRows(JSON.parse(saved)); }
 catch { storageBroken = true; toast('保存データを読み込めません。バックアップ読込で復元してください。既存データは上書きしていません。'); }
 lastSerial = highestSerial(rows);
+lastBrk = highestBrk(rows);
 try {
   const savedDraft = localStorage.getItem(draftKey);
   if (savedDraft) {
@@ -42,10 +48,17 @@ try {
 } catch { storageBroken = true; toast('下書きデータを読み込めません。データ保護のため保存を停止しています。'); }
 function save(next, restoring = false, redraw = true) {
   if (storageBroken && !restoring) throw new Error('保存データを読み込めないため保存を停止しています。バックアップから復元してください。');
-  const clean = validateRows(next);
+  let clean = validateRows(next), brkSequence = highestBrk(clean);
+  clean = clean.map(row => {
+    if (!needsBrk(row)) return row;
+    brkSequence++;
+    if (!Number.isSafeInteger(brkSequence)) throw new Error('BRKの採番上限に達しました。');
+    return { ...row, brk: String(brkSequence) };
+  });
   try {
     const serial = highestSerial(clean);
     localStorage.setItem(serialKey, String(serial)); lastSerial = serial;
+    localStorage.setItem(brkKey, String(brkSequence)); lastBrk = brkSequence;
     localStorage.setItem(storageKey, JSON.stringify(clean));
   } catch { throw new Error('保存できません。ブラウザーの保存容量・設定を確認してください。'); }
   rows = clean; storageBroken = false; if (redraw) render(); else refreshTotals();
@@ -140,7 +153,7 @@ function drawCell(td, row, field) {
   const [key, label, type] = field;
   const isDraft = isDraftRow(row.id);
   td.replaceChildren(); td.className = ['number','computed'].includes(type) ? 'numeric' : '';
-  if (type === 'auto') { td.dataset.key = key; td.textContent = isDraft ? '自動採番' : row[key]; td.classList.add('auto-number'); td.title = '案件の保存時に自動採番されます'; return; }
+  if (type === 'auto') { td.dataset.key = key; td.textContent = key === 'brk' ? row.brk || '—' : isDraft ? '自動採番' : row[key]; td.classList.add('auto-number'); td.title = key === 'brk' ? '契約締結予定・契約済になると800から自動採番されます' : '案件の保存時に自動採番されます'; return; }
   if (type === 'computed') { td.textContent = isDraft && row.sales === '' && row.cost === '' ? '' : yen(profit(row)); td.classList.add('profit-cell'); td.title = '営業売上 − コスト（自動計算）'; return; }
   td.dataset.key = key;
   if (tableEditing) td.classList.add('editable-cell');
@@ -216,7 +229,9 @@ function editCell(td, rowId, field) {
           }
           persistDrafts(drafts.map(r => r.id === rowId ? next : r)); toast('下書きを保存しました。案件名を入力すると案件として保存されます');
         } else {
-          save(rows.map(r => r.id === rowId ? { ...r, [key]: value } : r), false, false); toast('変更を保存しました');
+          save(rows.map(r => r.id === rowId ? { ...r, [key]: value } : r), false, false);
+          const brkCell = td.parentElement.querySelector('[data-key="brk"]'); if (brkCell) drawCell(brkCell, findRow(rowId), fields.find(([k]) => k === 'brk'));
+          toast('変更を保存しました');
         }
         const profitCell = td.parentElement.querySelector('.profit-cell'); const changed = findRow(rowId);
         if (profitCell) profitCell.textContent = isDraftRow(changed.id) && changed.sales === '' && changed.cost === '' ? '' : yen(profit(changed));
@@ -357,4 +372,5 @@ function scheduleListHeight() {
 }
 new ResizeObserver(scheduleListHeight).observe($('orders-table'));
 new MutationObserver(scheduleListHeight).observe($('orders-table'), { childList:true, subtree:true, characterData:true });
+if (!storageBroken && rows.some(needsBrk)) { try { save(rows, false, false); } catch (e) { toast(e.message); } }
 render();
