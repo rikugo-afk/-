@@ -113,7 +113,7 @@ function save(next, restoring = false, redraw = true) {
 function option(select, value, label = value) { const o = document.createElement('option'); o.value = value; o.textContent = label; select.append(o); }
 function ownerOptions(select, current = '') {
   select.replaceChildren(); option(select, '', '未選択'); owners.forEach(name => option(select, name));
-  if (current && !owners.includes(current)) option(select, current, `${current}（既存の担当者）`);
+  if (current && !owners.includes(current)) option(select, current, `${current}（既存の営業担当）`);
 }
 function statusOptions(select, current = '', allowEmpty = false, row = {}) {
   select.replaceChildren(); if (allowEmpty) option(select, '', '未選択'); statuses.forEach(name => option(select, name));

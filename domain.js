@@ -12,7 +12,7 @@ export function allocateBrkNumbers(list, floor=799) {
   });return {rows,last};
 }
 export const fields = [
-  ['number', '営業No.', 'auto'], ['brk', 'BRK', 'auto'], ['status', 'ステータス', 'status'], ['owner', '担当者', 'owner'],
+  ['number', '営業No.', 'auto'], ['brk', 'BRK', 'auto'], ['status', 'ステータス', 'status'], ['owner', '営業担当', 'owner'],
   ['created', '記入日', 'date'], ['contract', '契約予定日（締結日）', 'date'], ['name', '案件名', 'text'], ['folder', 'フォルダ', 'url'],
   ['permit', '許可証種類', 'permit'], ['address', '住所', 'text'], ['map', 'Googleマップ', 'url'], ['source', '流入経路', 'source'],
   ['sales', '営業売上', 'number'], ['cost', 'コスト', 'number'], ['profit', '営業粗利', 'computed'], ['paymentDate', '(契)入金日', 'date'],
