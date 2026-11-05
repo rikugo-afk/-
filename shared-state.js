@@ -1,3 +1,4 @@
+import { validateDevelopment, developmentSettingsKey } from './development-domain.js';
 import { validateRows, normalizeSalesNumbers, allocateBrkNumbers } from './domain.js';
 export const sharedKeys = { orders:'order-desk:v1', drafts:'order-desk:draft:v1', development:'order-desk:development:v1', salesSerial:'order-desk:last-number', brkSerial:'order-desk:last-brk' };
 export function validateSharedPayload(payload) {
@@ -9,12 +10,12 @@ export function validateSharedPayload(payload) {
     return {...clean,name:row.name?clean.name:'',status:row.status?clean.status:''};
   });
   for(const row of [...orders,...drafts]){
+    if(row.id===developmentSettingsKey)throw new Error('案件IDに内部設定の名前は使用できません。');
     if(row.id.length>200 || ids.has(row.id) || !/^[1-9]\d*$/.test(row.number) || !Number.isSafeInteger(Number(row.number)) || numbers.has(row.number))throw new Error('共有データの行IDまたは営業No.が不正です。');
     if(/^\d+$/.test(row.brk)){if(!Number.isSafeInteger(Number(row.brk))||brks.has(row.brk))throw new Error('BRKが不正または重複しています。');brks.add(row.brk);}
     ids.add(row.id);numbers.add(row.number);
   }
-  if(!payload.development || typeof payload.development!=='object' || Array.isArray(payload.development))throw new Error('開発進捗の形式が正しくありません。');
-  for(const item of Object.values(payload.development))if(!item || !['未着手','進行中','確認待ち','完了'].includes(item.status)||typeof item.note!=='string'||item.note.length>10000)throw new Error('開発進捗の形式が正しくありません。');
+  validateDevelopment(payload.development);
   if(!Number.isSafeInteger(payload.salesSerial)||payload.salesSerial<0||!Number.isSafeInteger(payload.brkSerial)||payload.brkSerial<799)throw new Error('採番履歴が正しくありません。');
   return {orders,drafts,development:payload.development,salesSerial:payload.salesSerial,brkSerial:payload.brkSerial};
 }

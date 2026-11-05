@@ -17,7 +17,15 @@ export async function openWorkspace(){
       if(saving)throw new Error('保存処理中です。');saving=true;$('shared-state').textContent='共有データを保存中…';
       try{
         validateSharedPayload(payload);
-        const {data,error}=await client.rpc('order_desk_save',{expected_revision:revision,next_payload:payload});
+        const conflict=()=>{changeHandler('conflict');return new Error('ほかの利用者が更新しました。未保存の内容を退避し、最新データを読み込んでください。');};
+        const fresh=await client.rpc('order_desk_read').abortSignal(AbortSignal.timeout(20000));
+        if(fresh.error)throw fresh.error;
+        if(fresh.data.revision!==revision)throw conflict();
+        const {data,error}=await client.rpc('order_desk_save',{expected_revision:revision,next_payload:payload}).abortSignal(AbortSignal.timeout(20000));
+        if(error&&!error.message?.includes('VERSION_CONFLICT')){
+          const latest=await client.rpc('order_desk_read').abortSignal(AbortSignal.timeout(8000));
+          if(!latest.error&&latest.data.revision!==revision)throw conflict();
+        }
         if(error){if(error.message?.includes('VERSION_CONFLICT')){changeHandler('conflict');throw new Error('ほかの利用者が更新しました。未保存の内容を退避し、最新データを読み込んでください。');}throw error;}
         const clean=validateSharedPayload(data.payload);revision=data.revision;
         $('shared-state').textContent='共有データに保存済み';return clean;

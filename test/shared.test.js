@@ -67,6 +67,11 @@ test('実際のPostgresでログイン不要の共有・同時更新防止・採
     await t.test('共有モードでは社員名簿に依存せず、未ログインで保存した更新者はnull',async()=>{
       const result=await db.query('select public.order_desk_read() as state');assert.equal(result.rows[0].state.updated_by,null);
     });
+    await t.test('既存の共有DBの形式で拡張した開発項目も失わず保存できる',async()=>{
+      const extended={...payload(),development:{a:{status:'進行中',note:'既存の備考',values:{facilityName:'施設名',startDate:'2026-11-05',targetOpenDate:'2026-12-05',bedCount:6,developmentSales:1000000,purchaseAmount:600000,linen:50000,fireCapacity:8,salesReport:'確認済み'}}}};
+      const saved=(await db.query('select public.order_desk_save(3,$1::jsonb) as state',[JSON.stringify(extended)])).rows[0].state;
+      assert.deepEqual(saved.payload.development,extended.development);assert.equal(saved.revision,4);
+    });
   }finally{await db.close();}
 });
 

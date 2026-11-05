@@ -1,17 +1,15 @@
 import { statuses, owners, sources, permits, fields, profit, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, hasAllOrderFields, sortRows, normalizeSalesNumbers, allocateBrkNumbers, missingSignedFields } from './domain.js';
 import { openWorkspace } from './collaboration.js';
 import { validateSharedPayload } from './shared-state.js';
+import { validateDevelopment, changeDevelopmentColumn, developmentProjects } from './development-domain.js';
+import { createDevelopmentGrid } from './development-grid.js';
+import { mergeSourceImport, sourceImportKind } from './source-import.js';
 const workspace=await openWorkspace();
 const localStorage=workspace.storage;
 const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
-const developmentKey = 'order-desk:development:v1', developmentStatuses = ['未着手','進行中','確認待ち','完了'];
+const developmentKey = 'order-desk:development:v1';
 let development = {}, developmentBroken = false;
-function validateDevelopment(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('開発進捗の形式が不正です。');
-  for (const item of Object.values(value)) if (!item || !developmentStatuses.includes(item.status) || typeof item.note !== 'string' || item.note.length > 10000) throw new Error('開発進捗の形式が不正です。');
-  return value;
-}
 try { const saved = localStorage.getItem(developmentKey); if (saved) development = validateDevelopment(JSON.parse(saved)); } catch { developmentBroken = true; }
 const undoHistory = [];
 let historyReady = false;
@@ -20,7 +18,8 @@ let sortKey = null, sortDirection = 'asc';
 let currentView = ['#completed','#development'].includes(location.hash) ? location.hash.slice(1) : 'orders';
 function belongsCompleted(row) { return editSession ? editSession.completedIds.has(row.id) : isOrderComplete(row); }
 function belongsDevelopment(row) { return editSession ? editSession.signedIds.has(row.id) : row.status==='契約済'; }
-function workspaceRows() { return rows.filter(r => currentView==='development'?belongsDevelopment(r):belongsCompleted(r)===(currentView==='completed')); }
+function developmentRows(){return developmentProjects(rows,development,belongsDevelopment);}
+function workspaceRows() { return currentView==='development'?developmentRows():rows.filter(r=>belongsCompleted(r)===(currentView==='completed')); }
 function captureState() { return JSON.stringify({ rows, drafts, development }); }
 function showMovement(previous, next) {
   const old=new Map(previous.map(r=>[r.id,r]));
@@ -182,7 +181,7 @@ function visible() { return sortRows(filterRows(workspaceRows(), $('search').val
 function refreshTotals() {
   $('nav-orders-count').textContent = rows.filter(r => !belongsCompleted(r)).length;
   $('nav-completed-count').textContent = rows.filter(belongsCompleted).length;
-  $('nav-development-count').textContent = rows.filter(belongsDevelopment).length;
+  $('nav-development-count').textContent = developmentRows().length;
   const report = monthlyReport(workspaceRows(), reportRange.basis, reportRange.start, reportRange.end);
   const formatMonth = value => `${value.slice(0,4)}年${Number(value.slice(5))}月`;
   const periodText = `${formatMonth(reportRange.start)}〜${formatMonth(reportRange.end)}`;
@@ -484,22 +483,17 @@ function saveDevelopment(id, patch) {
   const before = captureState(); if (!editSession) localStorage.setItem(developmentKey, JSON.stringify(next)); development = next; recordUndo(before);
   toast(editSession ? '開発進捗を反映しました。「保存」で確定します' : '開発進捗を保存しました');
 }
+const developmentGrid=createDevelopmentGrid({
+  getRows:developmentRows,getEntry:developmentEntry,getData:()=>development,isEditing:()=>tableEditing&&!developmentBroken,
+  setValue:(id,key,value)=>{const entry=developmentEntry(id);saveDevelopment(id,['status','note'].includes(key)?{[key]:value}:{values:{...entry.values,[key]:value}});},
+  commitActive:()=>{if(activeCell&&!activeCell.commit()){activeCell.input.focus();return false;}return true;},setActive:value=>{activeCell=value;},onDetails:openEditor,
+  onColumnChange:(action,details)=>{if(!editSession)throw new Error('「編集」を押してください。');const before=captureState();development=changeDevelopmentColumn(development,action,details);recordUndo(before);renderDevelopment();toast('項目を変更しました。「保存」で共有します');}
+});
 function renderDevelopment() {
   $('edit-development').textContent = tableEditing ? '✓ 保存' : '✎ 編集'; $('edit-development').setAttribute('aria-pressed', String(tableEditing));
   $('save-state-development').textContent=editSession?'編集中・未保存：「保存」で確定します。':'保存済み';
-  $('development-rows').replaceChildren(); const projects = rows.filter(belongsDevelopment);
-  $('development-empty').hidden = projects.length > 0;
-  $('development-note').textContent = developmentBroken ? '開発進捗の保存データを読み込めません。データ保護のため編集を停止しています。' : '契約済で保存した案件を自動表示します。「編集」を押して開発状況と備考を記録してください。';
-  for (const row of projects) {
-    const tr = document.createElement('tr'); tr.dataset.id = row.id;
-    for (const text of [row.number, row.name, row.owner]) { const td = document.createElement('td'); td.textContent = text; tr.append(td); }
-    const entry = developmentEntry(row.id), statusCell = document.createElement('td'), select = document.createElement('select');
-    select.setAttribute('aria-label', `${row.number}の開発状況`); developmentStatuses.forEach(s => option(select,s)); select.value = entry.status; select.disabled = !tableEditing || developmentBroken;
-    select.addEventListener('change', () => { try { saveDevelopment(row.id, {status:select.value}); } catch (e) { select.value = developmentEntry(row.id).status; toast('保存できません：' + e.message); } }); statusCell.append(select); tr.append(statusCell);
-    const noteCell = document.createElement('td'), note = document.createElement('textarea'); note.rows = 2; note.maxLength = 10000; note.value = entry.note; note.setAttribute('aria-label', `${row.number}の開発備考`); note.placeholder = '作業内容・確認事項など'; note.disabled = !tableEditing || developmentBroken;
-    note.addEventListener('change', () => { try { saveDevelopment(row.id,{note:note.value}); } catch(e) { toast('保存できません：' + e.message); } }); noteCell.append(note); tr.append(noteCell);
-    const actionCell = document.createElement('td'), details = document.createElement('button'); details.className='row-details'; details.textContent='案件詳細'; details.addEventListener('click',()=>openEditor(rows.find(r=>r.id===row.id))); actionCell.append(details); tr.append(actionCell); $('development-rows').append(tr);
-  }
+  $('development-note').textContent=developmentBroken?'開発進捗の保存データを読み込めません。データ保護のため編集を停止しています。':'契約済の案件と、取り込んだ開発案件を表示します。「編集」で入力し、「保存」で共有します。';
+  developmentGrid.render();
 }
 $('edit-development').addEventListener('click',toggleEditing);
 function openEditor(row) {
@@ -620,13 +614,15 @@ function download(content, filename, type) { const url = URL.createObjectURL(new
 $('export').addEventListener('click', () => download(csv(visible()), `受注一覧_${localDate()}.csv`, 'text/csv;charset=utf-8'));
 $('backup').addEventListener('click', () => { if(editSession){toast('先に「保存」を押してからバックアップしてください');return;} if (storageBroken) { toast('保存データを読み込めないためバックアップを作成できません。'); return; } download(JSON.stringify(workspace.shared?sharedPayload():rows, null, 2), `order-desk_${localDate()}.json`, 'application/json'); });
 $('restore').addEventListener('click', () => $('import-file').click());
+$('source-import').addEventListener('click', () => $('import-file').click());
 $('import-file').addEventListener('change', async e => {
   const file = e.target.files[0]; if (!file) return;
   try {
     if (file.size > 10000000) throw new Error('ファイルは10MB以下にしてください。');
     if(activeCell&&!activeCell.commit())throw new Error('入力中のセルを確認してください。');
-    const parsed=JSON.parse(await file.text()),full=Array.isArray(parsed)?null:validateSharedPayload(parsed),next=full?full.orders:validateRows(parsed);
-    if (confirm(`${next.length}件の案件${full?'・下書き・開発進捗':''}で現在のデータを置き換えますか？`)) {
+    const parsed=JSON.parse(await file.text()),sourcePlan=parsed.kind===sourceImportKind?mergeSourceImport(sharedPayload(),parsed):null,full=sourcePlan?validateSharedPayload(sourcePlan.payload):Array.isArray(parsed)?null:validateSharedPayload(parsed),next=full?full.orders:validateRows(parsed);
+    const prompt=sourcePlan?`受注管理を${sourcePlan.report.addedOrders}件追加・${sourcePlan.report.updatedOrders}件更新し、開発進捗を${sourcePlan.report.addedDevelopment}件追加・${sourcePlan.report.updatedDevelopment}件更新します。既存データを残して取り込みますか？`:`${next.length}件の案件${full?'・下書き・開発進捗':''}で現在のデータを置き換えますか？`;
+    if (confirm(prompt)) {
       if((workspace.shared||full)&&!editSession)await toggleEditing();
       if((workspace.shared||full)&&!editSession)throw new Error('編集を開始できません。');
       save(next,true,false);
