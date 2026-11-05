@@ -8,9 +8,17 @@ const config=readPublicConfig(process.env,defaults);
 if(config.mode==='shared') {
   const headers={apikey:config.key,'Content-Type':'application/json'};
   async function request(path,options={}) {
-    const response=await fetch(config.url+path,{...options,headers,signal:AbortSignal.timeout(20000)});
-    const data=await response.json().catch(()=>({}));
-    return {response,data};
+    for(let attempt=0;attempt<3;attempt++) {
+      try {
+        const response=await fetch(config.url+path,{...options,headers,signal:AbortSignal.timeout(30000)});
+        if([408,429,502,503,504].includes(response.status)&&attempt<2){await new Promise(resolve=>setTimeout(resolve,5000));continue;}
+        const data=await response.json().catch(()=>({}));
+        return {response,data};
+      } catch(error) {
+        if(attempt===2)throw new Error(`Supabase ${path.split('?')[0]} could not be reached after 3 attempts (${error.name}: ${error.message})`);
+        await new Promise(resolve=>setTimeout(resolve,5000));
+      }
+    }
   }
   const {response:read,data:state}=await request('/rest/v1/rpc/order_desk_read',{method:'POST',body:'{}'});
   if(!read.ok)throw new Error(`Public sharing is not enabled in Supabase (HTTP ${read.status}). Run supabase/enable-public-access.sql in SQL Editor.`);
