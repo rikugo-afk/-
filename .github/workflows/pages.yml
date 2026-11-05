@@ -49,3 +49,28 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Verify published URL sharing page
+        env:
+          SITE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          node --input-type=module <<'JS'
+          const site = new URL(process.env.SITE_URL);
+          for (let attempt = 0; attempt < 6; attempt++) {
+            try {
+              const probe = new URL(site);
+              probe.searchParams.set('deployment-check', String(Date.now()));
+              const page = await fetch(probe, {signal: AbortSignal.timeout(15000)});
+              const html = await page.text();
+              if (!page.ok || !html.includes('id="connection-screen"') || !html.includes('id="application" hidden') || html.includes('id="login-form"')) throw new Error('URL sharing page is not yet available');
+              const script = html.match(/src="(\.\/app\.[a-f0-9]{12}\.js)"/);
+              if (!script) throw new Error('Application script missing');
+              const asset = await fetch(new URL(script[1], site), {signal: AbortSignal.timeout(15000)});
+              if (!asset.ok) throw new Error('Application script unavailable');
+              console.log('PASS: published site serves URL sharing page and bundled application without a login form');
+              break;
+            } catch (error) {
+              if (attempt === 5) throw error;
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+          }
+          JS
