@@ -36,6 +36,10 @@ on conflict(user_id) do update set display_name=excluded.display_name, enabled=t
 
 ## 3. GitHubに公開用の接続情報を設定
 
+今回のプロジェクトについては、`public-config.json` にProject URLと公開用Publishable keyを設定済みです。GitHub Variablesへの入力は不要です。このファイルに管理用キーは含めません。
+
+以下は別プロジェクトへの切り替え時など、接続先を上書きする場合の手順です。
+
 SupabaseのConnectまたはProject Settings → APIから、Project URLと**Publishable key**（または旧形式のanon public key）を確認します。これらはブラウザー向けの公開接続情報です。
 
 GitHubリポジトリの Settings → Secrets and variables → Actions → Variables に以下を追加します。
@@ -49,7 +53,9 @@ GitHubリポジトリの Settings → Secrets and variables → Actions → Vari
 **service_role、secret key、DBパスワードは設定しないでください。** ビルドは管理用キーの混入を拒否します。公開キーが知られても社員リストで認可されない限りデータは読めません。
 
 共有版の変更ブランチをmainへ反映した後、Actions → Deploy Order Desk to GitHub Pages → Run workflowを実行します。接続情報が不足していれば共有モードのビルドは失敗し、以前の公開版は更新されません。
-`ORDER_DESK_MODE` 未設定の場合は従来のローカル保存モードです。変数を設定しただけでは、過去のビルドや既存の稼働画面は変更されません。
+`ORDER_DESK_MODE` 未設定の場合は `public-config.json` のモードを使用します（現在は共有モード）。従来のローカル保存を明示する場合は `local` にします。変数を設定しただけでは、過去のビルドや既存の稼働画面は変更されません。
+
+公開前の自動チェックはAuthへの接続と匿名アクセスの拒否を確認し、社員としてのログインや保存は行いません。社員アカウントは手順2で別途作成・登録してください。
 
 ## 4. 以前の案件を移す
 
@@ -74,7 +80,7 @@ npm test
 ORDER_DESK_MODE=shared SUPABASE_URL=https://YOUR_PROJECT.supabase.co SUPABASE_ANON_KEY=YOUR_PUBLIC_KEY npm start
 ```
 
-ローカル保存モードの確認は接続変数なしで `npm start` を実行します。
+ローカル保存モードの確認は `ORDER_DESK_MODE=local npm start` を実行します。
 `.env` は自動では読み込みません。環境変数として渡すか、Nodeの `--env-file` で読み込んでください。`.env.example` に設定名だけを載せています。
 
 ## 保存と制約

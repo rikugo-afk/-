@@ -22,10 +22,12 @@ npm start
 
 | モード | ログインと保存先 |
 |---|---|
-| ローカル（既定） | ログインなし。同じブラウザー・同じオリジンのlocalStorageのみ。端末間では共有しません。 |
-| 社員共有 | Supabase Authでログインし、許可された社員だけが共有Postgresの全案件を閲覧・編集します。 |
+| ローカル | `ORDER_DESK_MODE=local npm start`。ログインなし。同じブラウザー・同じオリジンのlocalStorageのみ。端末間では共有しません。 |
+| 社員共有（既定） | Supabase Authでログインし、許可された社員だけが共有Postgresの全案件を閲覧・編集します。 |
 
-共有モードでは `ORDER_DESK_MODE=shared`、`SUPABASE_URL`、`SUPABASE_ANON_KEY` をビルド時に設定します。公開用のPublishable/anon keyだけを使用し、管理用キーやDBパスワードをコードに保存しないでください。接続情報が不足した共有ビルドは失敗します。`.env.example` は設定名の例であり、`.env` を自動では読み込みません。
+`public-config.json` に、今回指定されたSupabaseプロジェクトのURLと公開用Publishable keyを設定済みです。既定で社員共有モードをビルドします。公開キーはブラウザーに配信する接続情報で、社員認可はDB側で行います。管理用キーやDBパスワードをコードに保存しないでください。
+
+ビルド時の `ORDER_DESK_MODE` でモードを上書きできます。別プロジェクトへ切り替える場合は `SUPABASE_URL` と `SUPABASE_ANON_KEY` の両方を指定します。片方だけの上書きや不正なキーは拒否します。`.env` は自動では読み込みません。
 
 共有データは「保存」を押したときに一括保存します。別の社員の更新は約15秒ごととタブ復帰時に確認します。同じ版を同時編集した場合、後の保存を止め、未保存の内容の退避と最新データの再読込を案内します。通信エラー時も変更は画面に保持します。
 
@@ -40,6 +42,8 @@ npm run build
 `dist/` の4ファイル（HTML・ハッシュ付きJS/CSS・`.nojekyll`）を静的ホスティングへ配置します。サブディレクトリでも利用できます。
 
 GitHub Pagesは Settings → Pages → SourceをGitHub Actionsにします。付属の `.github/workflows/pages.yml` はmainへのpushまたは手動実行で、依存インストール・テスト・ビルド・配置を行います。共有モードのGitHub Variables設定は [セットアップ手順](docs/SHARED_SETUP.md) を参照してください。変数を設定しただけでは稼働中の画面は変わりません。
+
+配置前に `npm run check:connection` でAuthへの接続と、未ログインでの共有RPC・テーブルのアクセス拒否を確認します。チェックに失敗した場合は公開を止め、前の公開版を維持します。社員としてのログイン・保存の確認は、社員アカウント登録後に別途行ってください。
 
 公開URLは https://rikugo-afk.github.io/-/ です。GitHub PagesのHTML自体は公開配信で、共有モードの案件データはDB側の社員認可で保護します。開発用Nodeサーバーを公開運用する必要はありません。
 

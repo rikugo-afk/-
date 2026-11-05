@@ -11,6 +11,11 @@ test('共有モードでは接続不足・管理用キーをビルドに混入�
   for(const role of ['service_role','authenticated'])assert.throws(()=>readPublicConfig({ORDER_DESK_MODE:'shared',SUPABASE_URL:'https://example.supabase.co',SUPABASE_ANON_KEY:'a.'+Buffer.from(JSON.stringify({role})).toString('base64url')+'.c'}));
   assert.throws(()=>readPublicConfig({ORDER_DESK_MODE:'shared',SUPABASE_URL:'http://example.com',SUPABASE_ANON_KEY:'sb_publishable_test'}));
   assert.equal(readPublicConfig({ORDER_DESK_MODE:'shared',SUPABASE_URL:'https://example.supabase.co',SUPABASE_ANON_KEY:'sb_publishable_test'}).mode,'shared');
+  const defaults={mode:'shared',url:'https://example.supabase.co',key:'sb_publishable_test'};
+  assert.equal(readPublicConfig({},defaults).url,defaults.url);
+  assert.deepEqual(readPublicConfig({ORDER_DESK_MODE:'local'},defaults),{mode:'local'});
+  assert.throws(()=>readPublicConfig({SUPABASE_URL:'https://other.supabase.co'},defaults));
+  assert.throws(()=>readPublicConfig({SUPABASE_ANON_KEY:'sb_publishable_other'},defaults));
 });
 test('共有データをブラウザーの既存データに混在させず、移行は番号を正規化',()=>{
   const real=new Map([['order-desk:v1',JSON.stringify([{id:'legacy',number:'S-010',name:'旧案件',status:'契約締結予定',sales:'',cost:'',paid:''}])]]);

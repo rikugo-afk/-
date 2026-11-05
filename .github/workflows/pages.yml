@@ -26,7 +26,12 @@ jobs:
       - run: npm test
       - run: npm run build
         env:
-          ORDER_DESK_MODE: ${{ vars.ORDER_DESK_MODE || 'local' }}
+          ORDER_DESK_MODE: ${{ vars.ORDER_DESK_MODE }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+      - run: npm run check:connection
+        env:
+          ORDER_DESK_MODE: ${{ vars.ORDER_DESK_MODE }}
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
       - uses: actions/configure-pages@v5
