@@ -682,7 +682,7 @@ function scheduleFloatingColumns(){
     if(floatingDirty||!floatingColumns.firstElementChild){
       const mirror=document.createElement('table');mirror.className='floating-columns-table';
       const group=document.createElement('colgroup');cells.forEach(()=>group.append(document.createElement('col')));mirror.append(group);
-      const head=table.tHead.cloneNode(true);head.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));head.querySelectorAll('button').forEach(e=>e.tabIndex=-1);mirror.append(head);floatingColumns.replaceChildren(mirror);floatingDirty=false;
+      const head=table.tHead.cloneNode(true);head.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));head.querySelectorAll('button,[tabindex]').forEach(e=>e.tabIndex=-1);mirror.append(head);floatingColumns.replaceChildren(mirror);floatingDirty=false;
     }
     const mirror=floatingColumns.firstElementChild;[...mirror.querySelectorAll('col')].forEach((col,index)=>col.style.width=`${widths[index]}px`);
     mirror.style.width=`${widths.reduce((sum,width)=>sum+width,0)}px`;
