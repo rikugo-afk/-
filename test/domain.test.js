@@ -117,8 +117,8 @@ test('サーバーから画面・モジュールを取得でき未知のパス�
     const base = `http://127.0.0.1:${server.address().port}`;
     const page = await fetch(base);
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /受注管理/);
-    for (const path of ['/app.js','/domain.js','/style.css']) assert.equal((await fetch(base + path)).status, 200);
+    const html=await page.text();assert.match(html, /受注管理/);
+    for (const path of [...html.matchAll(/(?:src|href)="\.\/(app\.[a-f0-9]{12}\.js|style\.[a-f0-9]{12}\.css)"/g)].map(m=>'/'+m[1])) assert.equal((await fetch(base + path)).status, 200);
     assert.equal((await fetch(base + '/package.json')).status, 404);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });

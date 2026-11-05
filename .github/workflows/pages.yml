@@ -22,8 +22,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - run: npm ci
       - run: npm test
       - run: npm run build
+        env:
+          ORDER_DESK_MODE: ${{ vars.ORDER_DESK_MODE || 'local' }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

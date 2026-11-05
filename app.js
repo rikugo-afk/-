@@ -1,4 +1,8 @@
 import { statuses, owners, sources, permits, fields, profit, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, hasAllOrderFields, sortRows, normalizeSalesNumbers, allocateBrkNumbers, missingSignedFields } from './domain.js';
+import { openWorkspace } from './collaboration.js';
+import { validateSharedPayload } from './shared-state.js';
+const workspace=await openWorkspace();
+const localStorage=workspace.storage;
 const $ = id => document.getElementById(id), storageKey = 'order-desk:v1';
 let rows = [], editing = null, storageBroken = false, toastTimer, activeCell = null, tableEditing = false;
 const developmentKey = 'order-desk:development:v1', developmentStatuses = ['未着手','進行中','確認待ち','完了'];
@@ -96,6 +100,7 @@ try {
 drafts=normalizeSalesNumbers([...rows,...drafts],lastSerial).slice(rows.length);lastSerial=highestSerial([...rows,...drafts]);
 lastBrk=highestBrk([...rows,...drafts]);
 function save(next, restoring = false, redraw = true) {
+  if(workspace.shared&&!editSession)throw new Error('「編集」を押して変更し、「保存」で共有DBへ保存してください。');
   if (storageBroken && !restoring) throw new Error('保存データを読み込めないため保存を停止しています。バックアップから復元してください。');
   let clean=normalizeSalesNumbers(validateRows(next),lastSerial);
   const allocation=allocateBrkNumbers(clean,highestBrk([...clean,...drafts]));clean=allocation.rows;const brkSequence=allocation.last;
@@ -499,6 +504,7 @@ function renderDevelopment() {
 $('edit-development').addEventListener('click',toggleEditing);
 function openEditor(row) {
   if (!row) return;
+  if(workspace.shared&&!editSession)toggleEditing();
   editing = row.id; $('order-form').reset(); $('form-error').textContent = '';
   $('dialog-title').textContent = '案件を編集'; $('delete').hidden = false;
   for (const [key, , type] of fields) {
@@ -522,21 +528,27 @@ function updateSignedEligibility() {
   $('signed-hint').textContent=missing.length?'「契約済」を選ぶ前に入力：'+missing.join('・'):'';
 }
 $('order-form').addEventListener('input',updateSignedEligibility);$('order-form').addEventListener('change',updateSignedEligibility);
-function toggleEditing() {
+let sharedSaving=false;
+function setSharedSaving(value){sharedSaving=value;for(const id of ['edit-table','edit-development','undo','undo-development'])$(id).disabled=value;$('application').inert=value;document.body.classList.toggle('shared-saving',value);}
+function sharedPayload(state={rows,drafts,development}){return {orders:state.rows,drafts:state.drafts,development:state.development,salesSerial:highestSerial([...state.rows,...state.drafts]),brkSerial:highestBrk([...state.rows,...state.drafts])};}
+async function toggleEditing() {
+  if(sharedSaving)return;
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
   if (!editSession) {
     if(storageBroken){toast('保存データを読み込めないため編集を開始できません');return;}
     editSession={before:captureState(),completedIds:new Set(rows.filter(isOrderComplete).map(r=>r.id)),signedIds:new Set(rows.filter(r=>r.status==='契約済').map(r=>r.id))}; sessionHistory=[];externalChange=false;tableEditing=true;render();return;
   }
   try {
-    if(externalChange)throw new Error('別のタブでデータが変更されています。上書きを防ぐため保存を停止しています。');
+    if(externalChange)throw new Error(workspace.shared?'他の社員が更新しています。未保存の内容を退避して最新データを読み込んでください。':'別のタブでデータが変更されています。上書きを防ぐため保存を停止しています。');
     let clean=validateRows(rows);validateDevelopment(development);
-    const allocated=allocateBrkNumbers([...clean,...drafts],highestBrk([...clean,...drafts]));
+    const numbered=normalizeSalesNumbers([...clean,...drafts],highestSerial([...clean,...drafts]));
+    const allocated=allocateBrkNumbers(numbered,highestBrk([...clean,...drafts]));
     const pending=allocated.rows.slice(clean.length);clean=allocated.rows.slice(0,clean.length);
     const previous=JSON.parse(editSession.before);confirmMoveBack(clean,previous.rows);
     const values=[[storageKey,JSON.stringify(clean)],[draftKey,JSON.stringify(pending)]];
     if(!developmentBroken)values.push([developmentKey,JSON.stringify(development)]);
     const old=values.map(([key])=>[key,localStorage.getItem(key)]);
+    if(workspace.shared){setSharedSaving(true);const saved=await workspace.commit(sharedPayload({rows:clean,drafts:pending,development}));lastSerial=Math.max(lastSerial,saved.salesSerial);allocated.last=Math.max(allocated.last,saved.brkSerial);}
     try {
       localStorage.setItem(serialKey,String(highestSerial([...clean,...pending])));localStorage.setItem(brkKey,String(allocated.last));
       for(const [key,value] of values)localStorage.setItem(key,value);
@@ -545,9 +557,11 @@ function toggleEditing() {
     showMovement(previous.rows,clean);
     toast('保存しました。入力状況に応じて案件の表示先を更新しました');
   } catch(e) {toast(e instanceof MoveBackCancelled ? '移動をキャンセルしました。編集を続けるか「元に戻す」で修正してください。' : '保存できません：'+e.message);}
+  finally{if(sharedSaving)setSharedSaving(false);updateUndoButton();}
 }
 $('edit-table').addEventListener('click',toggleEditing);
-function undoLastOperation() {
+async function undoLastOperation() {
+  if(sharedSaving)return;
   if (activeCell && !activeCell.commit()) { activeCell.input.focus(); return; }
   const stack=editSession?sessionHistory:undoHistory;
   if (!stack.length) return;
@@ -558,6 +572,7 @@ function undoLastOperation() {
     if(editSession){rows=restoredRows;drafts=target.drafts;development=target.development;stack.pop();render();toast('編集中の操作を1つ元に戻しました');return;}
     confirmMoveBack(restoredRows);
     validateDevelopment(target.development);
+    if(workspace.shared){setSharedSaving(true);const saved=await workspace.commit(sharedPayload({rows:restoredRows,drafts:target.drafts,development:target.development}));lastSerial=Math.max(lastSerial,saved.salesSerial);lastBrk=Math.max(lastBrk,saved.brkSerial);localStorage.setItem(serialKey,String(lastSerial));localStorage.setItem(brkKey,String(lastBrk));}
     const oldRows = localStorage.getItem(storageKey), oldDrafts = localStorage.getItem(draftKey), oldDevelopment = localStorage.getItem(developmentKey);
     try {
       localStorage.setItem(storageKey, JSON.stringify(restoredRows));
@@ -574,7 +589,8 @@ function undoLastOperation() {
     const previousRows=rows;rows = restoredRows; drafts = target.drafts; development = target.development; undoHistory.pop();
     render(); toast('保存済みの操作を1つ元に戻しました');
     showMovement(previousRows,restoredRows);
-  } catch (e) { toast(e instanceof MoveBackCancelled ? e.message : '元に戻せませんでした。ブラウザーの保存容量・設定を確認してください。'); }
+  } catch (e) { toast(e instanceof MoveBackCancelled||workspace.shared ? e.message : '元に戻せませんでした。ブラウザーの保存容量・設定を確認してください。'); }
+  finally{if(sharedSaving)setSharedSaving(false);updateUndoButton();}
 }
 $('undo').addEventListener('click',undoLastOperation); $('undo-development').addEventListener('click',undoLastOperation);
 $('add-row').addEventListener('click', () => {
@@ -602,11 +618,22 @@ for (const id of ['status-filter','payment-filter']) $(id).addEventListener('cha
 $('reset').addEventListener('click', () => { for (const id of ['search','status-filter','payment-filter']) $(id).value = ''; render(); });
 function download(content, filename, type) { const url = URL.createObjectURL(new Blob([content], { type })); const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 $('export').addEventListener('click', () => download(csv(visible()), `受注一覧_${localDate()}.csv`, 'text/csv;charset=utf-8'));
-$('backup').addEventListener('click', () => { if(editSession){toast('先に「保存」を押してからバックアップしてください');return;} if (storageBroken) { toast('保存データを読み込めないためバックアップを作成できません。'); return; } download(JSON.stringify(rows, null, 2), `order-desk_${localDate()}.json`, 'application/json'); });
+$('backup').addEventListener('click', () => { if(editSession){toast('先に「保存」を押してからバックアップしてください');return;} if (storageBroken) { toast('保存データを読み込めないためバックアップを作成できません。'); return; } download(JSON.stringify(workspace.shared?sharedPayload():rows, null, 2), `order-desk_${localDate()}.json`, 'application/json'); });
 $('restore').addEventListener('click', () => $('import-file').click());
 $('import-file').addEventListener('change', async e => {
   const file = e.target.files[0]; if (!file) return;
-  try { if (file.size > 10000000) throw new Error('ファイルは10MB以下にしてください。'); const next = validateRows(JSON.parse(await file.text())); if (confirm(`${next.length}件の案件で現在のデータを置き換えますか？`)) { save(next, true); toast('バックアップを復元しました'); } }
+  try {
+    if (file.size > 10000000) throw new Error('ファイルは10MB以下にしてください。');
+    if(activeCell&&!activeCell.commit())throw new Error('入力中のセルを確認してください。');
+    const parsed=JSON.parse(await file.text()),full=Array.isArray(parsed)?null:validateSharedPayload(parsed),next=full?full.orders:validateRows(parsed);
+    if (confirm(`${next.length}件の案件${full?'・下書き・開発進捗':''}で現在のデータを置き換えますか？`)) {
+      if((workspace.shared||full)&&!editSession)await toggleEditing();
+      if((workspace.shared||full)&&!editSession)throw new Error('編集を開始できません。');
+      save(next,true,false);
+      if(full){drafts=full.drafts.length?full.drafts:[emptyDraft()];development=full.development;developmentBroken=false;lastSerial=Math.max(lastSerial,full.salesSerial);lastBrk=Math.max(lastBrk,full.brkSerial);drafts=normalizeSalesNumbers([...rows,...drafts],lastSerial).slice(rows.length);lastSerial=highestSerial([...rows,...drafts]);}
+      render();toast(editSession?'読み込みました。「保存」で確定します':'バックアップを復元しました');
+    }
+  }
   catch (error) { toast('読込に失敗しました：' + error.message); } finally { e.target.value = ''; }
 });
 function sample() {
@@ -616,11 +643,16 @@ function sample() {
     ['S-002','ひかり建設 / 建設業許可更新','本間','収支シミュ提出','建設業','神奈川県横浜市中区','紹介',180000,30000,false],
     ['S-003','カフェ こもれび / 新規開業サポート','郷','面談取り付け','飲食店営業','東京都世田谷区三軒茶屋','新規アプローチ',150000,25000,false]
   ].map(([number,name,owner,status,permit,address,source,sales,cost,paid]) => ({ id: crypto.randomUUID(), number, name, owner, status, permit, address, source, sales, cost, paid, created: localDate(), note: 'サンプル案件（架空のデータ）' }));
-  try { save(examples); toast('サンプル案件を3件追加しました'); } catch (error) { toast(error.message); }
+  try { if(workspace.shared&&!editSession)toggleEditing();save(examples); toast(editSession?'サンプルを追加しました。「保存」で確定します':'サンプル案件を3件追加しました'); } catch (error) { toast(error.message); }
 }
 ['sample','empty-sample'].forEach(id => $(id).addEventListener('click', sample));
-window.addEventListener('storage', e => { if ([storageKey,draftKey,developmentKey].includes(e.key)) {if(editSession){externalChange=true;toast('別のタブでデータが変更されました。上書きを防ぐため保存を停止します。');}else location.reload();} });
+window.addEventListener('storage', e => { if (!workspace.shared&&[storageKey,draftKey,developmentKey].includes(e.key)) {if(editSession){externalChange=true;toast('別のタブでデータが変更されました。上書きを防ぐため保存を停止します。');}else location.reload();} });
 window.addEventListener('beforeunload',e=>{if(editSession&&(activeCell||captureState()!==editSession.before)){e.preventDefault();e.returnValue='';}});
+if(workspace.shared){
+  workspace.onRemoteChange(reason=>{if(sharedSaving&&reason!=='conflict')return;if(editSession){externalChange=true;$('conflict-notice').hidden=false;}else location.reload();});
+  $('download-unsaved').addEventListener('click',()=>download(JSON.stringify(sharedPayload(),null,2),'order-desk-unsaved.json','application/json'));
+  $('reload-shared').addEventListener('click',()=>{if(confirm('未保存の変更を破棄して最新の共有データを読み込みますか？必要な内容は先に退避してください。')){editSession=null;location.reload();}});
+}
 // Measure actual row heights so wrapped text and validation messages also respect the 30-row limit.
 let listHeightFrame = null;
 function scheduleListHeight() {
