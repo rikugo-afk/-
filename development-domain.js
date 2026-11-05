@@ -3,7 +3,7 @@ export const developmentStatuses=['未着手','進行中','確認待ち','完了
 // Keep the supplied order. Repeated headings have been consolidated into one field.
 export const developmentFields=[
   ['status','進捗','status'],['brk','BRK','linked'],['contractDocument','契約書','text'],['payment','入金','payment'],
-  ['startDate','着手日','date'],['targetOpenDate','公開目標','date'],['leadTime','リードタイム','computed'],['assignee','担当','owner'],
+  ['startDate','着手日','date'],['targetOpenDate','公開目標','date'],['leadTime','リードタイム','computed'],['assignee','開発担当','text'],['salesOwner','営業担当','linked'],
   ['facilityName','施設名','text'],['area','エリア','text'],['address','住所','text'],['map','Googleマップ','url'],['layout','間取','text'],
   ['bedCount','ベッド数','integer'],['kingBeds','K','integer'],['queenBeds','Q','integer'],['doubleBeds','D','integer'],['semiDoubleBeds','SD','integer'],['singleBeds','S','integer'],['sofaBeds','ソ','integer'],['parking','駐車場','text'],
   ['separator','','separator'],['contractHolder','契約名義','text'],['entryMethod','入室方法','text'],['permit','許可証種類','permit'],['renovationType','Reno・New','text'],['renovationCompany','リフォ会社','text'],['bedLayout','ベッド配置','text'],['folderCreated','フォルダ作成','text'],['neighborGreeting','近隣挨拶','text'],['fireDepartment','消防','text'],['lodgingAcceptanceWaiting','民泊受理待','text'],['license','許可','text'],['interiorCoordinator','インテリア（コーディネーター）','text'],['suideco','スイデコ','text'],['supplies','備品','text'],['manual','マニュアル','text'],['infrastructure','インフラ','text'],['keyReceipt','鍵受領書','text'],['cleaning','清掃','text'],['listingCheck','リスティチェック','text'],['photography','撮影','text'],['shootingDate','撮影日','date'],['floorArea','平米数','decimal'],['createdBy','作成担当','text'],['reviewAverage','レビュ平均','decimal'],
@@ -17,7 +17,15 @@ export const customDevelopmentTypes=['text','textarea','date','money','integer',
 const validLabel=label=>typeof label==='string'&&label.trim()!==''&&label.length<=80;
 export function developmentColumnConfig(data){
   const stored=data[developmentSettingsKey];
-  const config=stored?stored.columnConfig:{columns:developmentFields.map(field=>field[0]),labels:{},customFields:[]};
+  let config=stored?stored.columnConfig:{columns:developmentFields.filter(field=>!['contractDocument','payment'].includes(field[0])).map(field=>field[0]),labels:{},customFields:[],schemaVersion:3};
+  // Upgrade existing column layouts in memory; keep saved entries and custom columns intact.
+  if(config&&Array.isArray(config.columns)&&config.labels&&config.schemaVersion!==3){
+    config=structuredClone(config);config.schemaVersion=3;
+    if(!config.columns.includes('assignee')){const index=config.columns.indexOf('facilityName');config.columns.splice(index<0?config.columns.length:index,0,'assignee');}
+    if(!config.columns.includes('salesOwner'))config.columns.splice(config.columns.indexOf('assignee')+1,0,'salesOwner');
+    if(config.labels.assignee==='担当')delete config.labels.assignee;
+    config.columns=config.columns.filter(key=>!['contractDocument','payment'].includes(key));
+  }
   if(!config||!Array.isArray(config.columns)||!Array.isArray(config.customFields)||config.columns.length>500||config.customFields.length>500||!config.labels||typeof config.labels!=='object'||Array.isArray(config.labels))throw new Error('開発項目の設定が正しくありません。');
   const known=new Set(byKey.keys());
   for(const field of config.customFields){
@@ -65,6 +73,7 @@ export function developmentValue(entry,row,key){
   if(key==='status')return entry.status;
   if(key==='note')return entry.note;
   if(key==='brk')return row.brk||'';
+  if(key==='salesOwner')return row.sourceOnly?'':row.owner||'';
   if(key==='leadTime'){
     const start=developmentValue(entry,row,'startDate'),end=developmentValue(entry,row,'targetOpenDate');
     return /^\d{4}-\d{2}-\d{2}$/.test(start)&&/^\d{4}-\d{2}-\d{2}$/.test(end)?(Date.parse(end+'T00:00:00Z')-Date.parse(start+'T00:00:00Z'))/86400000:null;
@@ -79,7 +88,7 @@ export function developmentValue(entry,row,key){
   }
   if(Object.hasOwn(entry.values||{},key))return entry.values[key];
   if(Object.hasOwn(entry.importedText||{},key))return entry.importedText[key];
-  const fallback={assignee:row.owner,facilityName:row.name,address:row.address,map:row.map,permit:row.permit,payment:typeof row.paid==='boolean'?(row.paid?'入金済':'未入金'):''};
+  const fallback={facilityName:row.name,address:row.address,map:row.map,permit:row.permit,payment:typeof row.paid==='boolean'?(row.paid?'入金済':'未入金'):''};
   return fallback[key]??'';
 }
 export function parseDevelopmentInput(field,value){

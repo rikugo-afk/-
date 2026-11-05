@@ -1,9 +1,11 @@
+import { attachColumnResize } from './column-resize.js';
 import { configuredDevelopmentFields, hiddenDevelopmentFields, developmentOptions, developmentValue, parseDevelopmentInput, formatDevelopmentValue } from './development-domain.js';
 const $=id=>document.getElementById(id);
 const editable=field=>!['linked','computed','separator'].includes(field[2]);
 const collator=new Intl.Collator('ja',{numeric:true,sensitivity:'base'});
 export function createDevelopmentGrid({getRows,getEntry,getData,isEditing,setValue,commitActive,setActive,onDetails,onColumnChange}){
   let sortKey=null,direction=1,fields=[],stickyKeys=[];
+  const resizer=attachColumnResize($('development-table'),{onWidths:widths=>stickyKeys.forEach((key,i)=>$('development-scroll').style.setProperty(`--dev-sticky-${i+1}`,(widths.get(key)||135)+'px'))});
   const addOption=(select,value,label=value)=>{const option=document.createElement('option');option.value=value;option.textContent=label;select.append(option);};
   function stickyClass(key){const i=stickyKeys.indexOf(key);return i<0?'':`development-sticky-${i+1}`;}
   function rename(th,field){
@@ -127,6 +129,7 @@ export function createDevelopmentGrid({getRows,getEntry,getData,isEditing,setVal
       for(const field of fields){const td=document.createElement('td');draw(td,row,field);tr.append(td);}
       const td=document.createElement('td'),button=document.createElement('button');button.type='button';button.className='row-details';button.textContent=row.sourceOnly?'開発データ':'案件詳細';button.disabled=!!row.sourceOnly;button.addEventListener('click',()=>{if(commitActive())onDetails(row);});td.append(button);tr.append(td);$('development-rows').append(tr);
     }
+    resizer.refresh();
   }
   return {render};
 }

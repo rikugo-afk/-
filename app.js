@@ -1,3 +1,4 @@
+import { attachColumnResize } from './column-resize.js';
 import { statuses, owners, sources, permits, fields, profit, monthlyReport, parseMonthInput, parseDateInput, formatDate, filterRows, validateRows, csv, isOrderComplete, hasAllOrderFields, sortRows, normalizeSalesNumbers, allocateBrkNumbers, missingSignedFields } from './domain.js';
 import { openWorkspace } from './collaboration.js';
 import { validateSharedPayload } from './shared-state.js';
@@ -704,3 +705,4 @@ new MutationObserver(scheduleFloatingColumns).observe($('orders-panel'),{attribu
 new ResizeObserver(scheduleFloatingColumns).observe($('movement-message'));
 historyReady = true;
 render();
+attachColumnResize($('orders-table')).refresh();

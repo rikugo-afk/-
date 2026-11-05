@@ -5,15 +5,15 @@ import {validateSharedPayload} from '../shared-state.js';
 const field=key=>developmentFields.find(f=>f[0]===key);
 const row={id:'signed',number:'1',brk:'800',status:'契約済',name:'施設A',owner:'藤田',address:'札幌市',map:'https://maps.google.com/',permit:'民泊',sales:100,cost:10,paid:false};
 test('指定順で重複列をまとめ、空欄の区切りを保持する',()=>{
-  assert.equal(developmentFields.length,79);
+  assert.equal(developmentFields.length,80);
   const labels=developmentFields.map(f=>f[1]);for(const key of ['ベッド数','ベッド配置','入金','平米数'])assert.equal(labels.filter(v=>v===key).length,1);
-  assert.deepEqual(labels.slice(0,8),['進捗','BRK','契約書','入金','着手日','公開目標','リードタイム','担当']);
+  assert.deepEqual(labels.slice(0,9),['進捗','BRK','契約書','入金','着手日','公開目標','リードタイム','開発担当','営業担当']);
   assert.deepEqual(labels.slice(-3),['見積もり粗利','経営申告書','売上報告']);
   assert.equal(new Set(developmentFields.map(f=>f[0])).size,developmentFields.length);
 });
 test('既存の進捗・備考を保持し、案件情報を初期表示して個別の空欄上書きも保存',()=>{
   const old={status:'進行中',note:'以前のメモ'};assert.deepEqual(validateDevelopment({signed:old}),{signed:old});
-  for(const [key,value] of [['brk','800'],['facilityName','施設A'],['assignee','藤田'],['permit','民泊'],['payment','未入金']])assert.equal(developmentValue(old,row,key),value);
+  for(const [key,value] of [['brk','800'],['facilityName','施設A'],['assignee',''],['salesOwner','藤田'],['permit','民泊'],['payment','未入金']])assert.equal(developmentValue(old,row,key),value);
   assert.equal(developmentValue({...old,values:{facilityName:'別の施設名',address:''}},row,'facilityName'),'別の施設名');
   assert.equal(developmentValue({...old,values:{address:''}},row,'address'),'');assert.equal(row.name,'施設A');
 });
@@ -56,4 +56,25 @@ test('項目の追加・手入力の名前変更・削除・復元を全員で�
   data=changeDevelopmentColumn(data,'restore',{key:custom[0]});assert.equal(configuredDevelopmentFields(data).at(-1)[1],'確認日');assert.equal(data.signed.values[custom[0]],'2026-11-05');
   assert.ok(validateDevelopment(JSON.parse(JSON.stringify(data)))[developmentSettingsKey]);
   assert.throws(()=>changeDevelopmentColumn(data,'add',{label:'確認日',type:'text'}));assert.throws(()=>changeDevelopmentColumn(data,'rename',{key:custom[0],label:''}));
+});
+
+test('開発担当は独立した手入力、営業担当は受注管理と連動する',()=>{
+ const entry={status:'進行中',note:'',values:{assignee:'開発の担当者'}};
+ assert.equal(developmentValue(entry,row,'assignee'),'開発の担当者');assert.equal(developmentValue(entry,row,'salesOwner'),'藤田');
+ assert.equal(developmentValue(entry,{...row,owner:'本間'},'assignee'),'開発の担当者');assert.equal(developmentValue(entry,{...row,owner:'本間'},'salesOwner'),'本間');
+ assert.equal(developmentValue(entry,{...row,sourceOnly:true,owner:'開発の担当者'},'salesOwner'),'');
+ assert.equal(parseDevelopmentInput(field('assignee'),'新しい開発担当'),'新しい開発担当');assert.throws(()=>parseDevelopmentInput(field('salesOwner'),'郷'));
+});
+test('旧列設定にも担当2列を追加し、既存の開発担当・追加項目を保持する',async()=>{
+ const {developmentSettingsKey,configuredDevelopmentFields,changeDevelopmentColumn}=await import('../development-domain.js');
+ const old={ [developmentSettingsKey]:{status:'未着手',note:'',columnConfig:{columns:['status','assignee','facilityName'],labels:{assignee:'担当',facilityName:'カスタム施設名'},customFields:[]}},signed:{status:'進行中',note:'以前のメモ',values:{assignee:'以前の開発担当'}}};
+ const before=JSON.stringify(old),fields=configuredDevelopmentFields(old);assert.deepEqual(fields.map(f=>f[1]),['進捗','開発担当','営業担当','カスタム施設名']);assert.equal(JSON.stringify(old),before);assert.equal(developmentValue(old.signed,row,'assignee'),'以前の開発担当');
+ const hidden=changeDevelopmentColumn(old,'remove',{key:'salesOwner'});assert.ok(!configuredDevelopmentFields(hidden).some(f=>f[0]==='salesOwner'));
+});
+
+test('開発一覧の契約書・入金を旧設定からも外し、入力値は保持する',async()=>{
+ const {configuredDevelopmentFields,developmentSettingsKey}=await import('../development-domain.js');
+ assert.ok(configuredDevelopmentFields({}).every(f=>!['contractDocument','payment'].includes(f[0])));
+ const data={[developmentSettingsKey]:{status:'未着手',note:'',columnConfig:{schemaVersion:2,columns:['status','contractDocument','payment','assignee'],labels:{},customFields:[]}},a:{status:'進行中',note:'',values:{contractDocument:'済',payment:'入金済',assignee:'開発の担当'}}};
+ assert.deepEqual(configuredDevelopmentFields(data).map(f=>f[0]),['status','assignee','salesOwner']);assert.equal(data.a.values.contractDocument,'済');assert.equal(data.a.values.payment,'入金済');validateDevelopment(data);
 });

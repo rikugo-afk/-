@@ -83,8 +83,8 @@ for line,row in d_rows:
  entry['developmentSource']={'fileName':os.path.basename(d_path),'row':line,'headers':d_table[0],'cells':row}
  values=entry.get('values',{});legacy={}
  for key,label,kind in fields:
-  if key in ('status','brk','separator') or kind=='computed':continue
-  indices=headers.get(normalize(label),[])
+  if key in ('status','brk','separator') or kind in ('computed','linked'):continue
+  indices=headers.get(normalize('担当' if key=='assignee' else label),[])
   if not indices:continue
   raw_values=[row[i].strip() for i in indices]
   if key=='bedCount':
