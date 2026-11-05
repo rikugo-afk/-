@@ -637,5 +637,42 @@ function scheduleListHeight() {
 }
 new ResizeObserver(scheduleListHeight).observe($('orders-table'));
 new MutationObserver(scheduleListHeight).observe($('orders-table'), { childList:true, subtree:true, characterData:true });
+window.addEventListener('resize',scheduleListHeight);
+// The scroll container pins headings internally; mirror them at the viewport edge during page scrolling.
+const floatingColumns=document.createElement('div');floatingColumns.id='floating-order-columns';floatingColumns.hidden=true;floatingColumns.setAttribute('aria-hidden','true');document.body.append(floatingColumns);
+let floatingFrame=null,floatingDirty=true;
+function scheduleFloatingColumns(){
+  if(floatingFrame!==null)return;
+  floatingFrame=requestAnimationFrame(()=>{
+    floatingFrame=null;
+    const viewport=$('orders-scroll'),table=$('orders-table'),rect=viewport.getBoundingClientRect();
+    const notice=$('movement-message'),noticeRect=notice.getBoundingClientRect();
+    const top=!notice.hidden&&noticeRect.top<=12&&noticeRect.bottom>0?noticeRect.bottom+8:0;
+    if(!$('orders-panel').open||$('orders-panel').hidden||!table.getClientRects().length||rect.top>=top||rect.bottom<=top){floatingColumns.hidden=true;return;}
+    const cells=[...$('columns').children],widths=cells.map(cell=>cell.getBoundingClientRect().width);
+    if(floatingDirty||!floatingColumns.firstElementChild){
+      const mirror=document.createElement('table');mirror.className='floating-columns-table';
+      const group=document.createElement('colgroup');cells.forEach(()=>group.append(document.createElement('col')));mirror.append(group);
+      const head=table.tHead.cloneNode(true);head.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));head.querySelectorAll('button').forEach(e=>e.tabIndex=-1);mirror.append(head);floatingColumns.replaceChildren(mirror);floatingDirty=false;
+    }
+    const mirror=floatingColumns.firstElementChild;[...mirror.querySelectorAll('col')].forEach((col,index)=>col.style.width=`${widths[index]}px`);
+    mirror.style.width=`${widths.reduce((sum,width)=>sum+width,0)}px`;
+    const left=Math.max(0,rect.left+viewport.clientLeft),right=Math.min(innerWidth,rect.left+viewport.clientLeft+viewport.clientWidth);
+    const height=table.tHead.getBoundingClientRect().height;
+    floatingColumns.style.left=`${left}px`;floatingColumns.style.width=`${Math.max(0,right-left)}px`;
+    floatingColumns.style.top=`${Math.min(top,rect.bottom-height)}px`;
+    mirror.style.transform=`translateX(${table.getBoundingClientRect().left-left}px)`;floatingColumns.hidden=false;
+  });
+}
+floatingColumns.addEventListener('click',event=>{
+  const key=event.target.closest('button')?.closest('th')?.dataset.sortKey;
+  if(key)$('columns').querySelector(`[data-sort-key="${key}"] button`)?.click();
+});
+window.addEventListener('scroll',scheduleFloatingColumns,{passive:true});window.addEventListener('resize',scheduleFloatingColumns);
+$('orders-scroll').addEventListener('scroll',scheduleFloatingColumns,{passive:true});
+const floatingResize=new ResizeObserver(scheduleFloatingColumns);floatingResize.observe($('orders-table'));floatingResize.observe($('orders-scroll'));
+new MutationObserver(()=>{floatingDirty=true;scheduleFloatingColumns();}).observe($('orders-table'),{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['aria-sort']});
+new MutationObserver(scheduleFloatingColumns).observe($('orders-panel'),{attributes:true,attributeFilter:['open','hidden']});
+new ResizeObserver(scheduleFloatingColumns).observe($('movement-message'));
 historyReady = true;
 render();
