@@ -2,6 +2,7 @@
 // The save probe always uses revision -1, which cannot match a workspace revision.
 import { readFile } from 'node:fs/promises';
 import { readPublicConfig } from '../build-config.js';
+process.on('uncaughtException',error=>{console.error(`::error::${String(error.message).replaceAll('\n',' ')}`);process.exitCode=1;});
 const defaults=JSON.parse(await readFile(new URL('../public-config.json',import.meta.url),'utf8'));
 const config=readPublicConfig(process.env,defaults);
 if(config.mode==='shared') {
