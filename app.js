@@ -539,7 +539,7 @@ async function toggleEditing() {
     editSession={before:captureState(),completedIds:new Set(rows.filter(isOrderComplete).map(r=>r.id)),signedIds:new Set(rows.filter(r=>r.status==='契約済').map(r=>r.id))}; sessionHistory=[];externalChange=false;tableEditing=true;render();return;
   }
   try {
-    if(externalChange)throw new Error(workspace.shared?'他の社員が更新しています。未保存の内容を退避して最新データを読み込んでください。':'別のタブでデータが変更されています。上書きを防ぐため保存を停止しています。');
+    if(externalChange)throw new Error(workspace.shared?'ほかの利用者が更新しています。未保存の内容を退避して最新データを読み込んでください。':'別のタブでデータが変更されています。上書きを防ぐため保存を停止しています。');
     let clean=validateRows(rows);validateDevelopment(development);
     const numbered=normalizeSalesNumbers([...clean,...drafts],highestSerial([...clean,...drafts]));
     const allocated=allocateBrkNumbers(numbered,highestBrk([...clean,...drafts]));

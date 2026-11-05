@@ -28,7 +28,7 @@ test('共有データをブラウザーの既存データに混在させず、�
   assert.throws(()=>validateSharedPayload({...payload(),drafts:[{...payload().drafts[0],number:'9007199254740992'}]}));
   assert.throws(()=>validateSharedPayload({...payload(),orders:[{...payload().orders[0],brk:'800'}],drafts:[{...payload().drafts[0],brk:'800'}]}));
 });
-test('実際のPostgresで社員権限・匿名拒否・同時更新防止・採番保護を検証',async t=>{
+test('実際のPostgresでログイン不要の共有・同時更新防止・採番保護を検証',async t=>{
   const db=new PGlite();
   const member='00000000-0000-0000-0000-000000000001',other='00000000-0000-0000-0000-000000000002',disabled='00000000-0000-0000-0000-000000000003';
   try{
@@ -36,14 +36,15 @@ test('実際のPostgresで社員権限・匿名拒否・同時更新防止・採
     await db.exec(await readFile(new URL('../supabase/schema.sql',import.meta.url),'utf8'));
     await db.query('insert into public.order_desk_employees(user_id,enabled) values($1,true),($2,false)',[member,disabled]);
     const actor=async(role,id='')=>{await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]);await db.exec('set role '+role);};
-    await t.test('匿名・未登録社員・利用停止社員には共有データを渡さない',async()=>{
-      await actor('anon');await assert.rejects(db.query('select public.order_desk_read()'),/permission denied/);
-      for(const id of ['',other,disabled]){await actor('authenticated',id);await assert.rejects(db.query('select public.order_desk_read()'),/EMPLOYEE_ACCESS_REQUIRED/);}
+    await t.test('未ログインでも、社員登録の有無にかかわらず同じ案件を開ける',async()=>{
+      for(const [role,id] of [['anon',''],['authenticated',other],['authenticated',disabled]]){
+        await actor(role,id);const result=await db.query('select public.order_desk_read() as state');assert.equal(result.rows[0].state.revision,0);
+      }
     });
-    await actor('authenticated',member);
-    await t.test('社員でも表へ直接アクセスできず、RPCのみ許可',async()=>{
+    await actor('anon');
+    await t.test('匿名利用者でも表へ直接アクセスできず、RPCのみ許可',async()=>{
       await assert.rejects(db.query('select * from public.order_desk_workspace'),/permission denied/);await assert.rejects(db.query('select * from public.order_desk_employees'),/permission denied/);
-      const result=await db.query('select public.order_desk_read() as state');assert.equal(result.rows[0].state.revision,0);
+      await assert.rejects(db.query("update public.order_desk_workspace set payload='{}'"),/permission denied/);
     });
     await t.test('一括保存し、古い版と版未指定による上書きを拒否',async()=>{
       const saved=await db.query('select public.order_desk_save($1,$2::jsonb) as state',[0,JSON.stringify(payload())]);assert.equal(saved.rows[0].state.revision,1);
@@ -63,8 +64,31 @@ test('実際のPostgresで社員権限・匿名拒否・同時更新防止・採
       await db.query('select public.order_desk_save(1,$1::jsonb)',[JSON.stringify({...payload(),salesSerial:50,brkSerial:850})]);
       const result=await db.query('select public.order_desk_save(2,$1::jsonb) as state',[JSON.stringify(payload())]);assert.equal(result.rows[0].state.payload.salesSerial,50);assert.equal(result.rows[0].state.payload.brkSerial,850);
     });
-    await t.test('利用停止は既存セッションにも適用',async()=>{
-      await db.exec('reset role');await db.query('update public.order_desk_employees set enabled=false where user_id=$1',[member]);await actor('authenticated',member);await assert.rejects(db.query('select public.order_desk_read()'),/EMPLOYEE_ACCESS_REQUIRED/);await assert.rejects(db.query('select public.order_desk_save(3,$1::jsonb)',[JSON.stringify(payload())]),/EMPLOYEE_ACCESS_REQUIRED/);
+    await t.test('共有モードでは社員名簿に依存せず、未ログインで保存した更新者はnull',async()=>{
+      const result=await db.query('select public.order_desk_read() as state');assert.equal(result.rows[0].state.updated_by,null);
     });
+  }finally{await db.close();}
+});
+
+test('社員ログイン版からの移行は案件・版・採番・開発進捗を保持し再実行できる',async()=>{
+  const db=new PGlite();
+  try{
+    await db.exec(`create role anon;create role authenticated;create schema auth;create table auth.users(id uuid primary key);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;`);
+    await db.exec(await readFile(new URL('./fixtures/employee-schema.sql',import.meta.url),'utf8'));
+    const original={...payload(),development:{a:{status:'進行中',note:'引き継ぐ開発進捗'}},salesSerial:100,brkSerial:900};
+    await db.query('update public.order_desk_workspace set revision=7,payload=$1::jsonb,updated_at=$2',[JSON.stringify(original),'2026-11-05T00:00:00Z']);
+    await db.exec('set role anon');await assert.rejects(db.query('select public.order_desk_read()'),/permission denied/);await db.exec('reset role');
+    const migration=await readFile(new URL('../supabase/enable-public-access.sql',import.meta.url),'utf8');
+    const saveDefinition=(await db.query("select pg_get_functiondef('public.order_desk_save(bigint,jsonb)'::regprocedure) as sql")).rows[0].sql;
+    await db.exec(saveDefinition.replace('and enabled)', 'and enabled = true)'));
+    await assert.rejects(db.exec(migration),/Schema differs/);await db.exec('rollback');
+    await db.exec('set role anon');await assert.rejects(db.query('select public.order_desk_read()'),/permission denied/);await db.exec('reset role');
+    await db.exec(saveDefinition);
+    await db.exec(migration);await db.exec('set role anon');
+    const moved=(await db.query('select public.order_desk_read() as state')).rows[0].state;
+    assert.deepEqual(moved.payload,original);assert.equal(moved.revision,7);assert.match(moved.updated_at,/2026-11-05/);
+    const saved=(await db.query('select public.order_desk_save(7,$1::jsonb) as state',[JSON.stringify(original)])).rows[0].state;assert.equal(saved.revision,8);assert.equal(saved.updated_by,null);
+    await db.exec('reset role');await db.exec(migration);await db.exec('set role anon');
+    assert.equal((await db.query('select public.order_desk_read() as state')).rows[0].state.revision,8);
   }finally{await db.close();}
 });

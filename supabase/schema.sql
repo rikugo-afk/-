@@ -1,4 +1,5 @@
--- Supabase SQL Editorで実行してください。社員登録はdocs/SHARED_SETUP.mdを参照。
+-- URLを開いた人がログインせずに共有案件を閲覧・編集するためのスキーマ。
+-- 旧社員リストは互換性のため保持しますが、ログインや社員登録は使用しません。
 begin;
 create table if not exists public.order_desk_employees (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -23,9 +24,6 @@ create or replace function public.order_desk_read()
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare result jsonb;
 begin
-  if auth.uid() is null or not exists(select 1 from public.order_desk_employees where user_id=auth.uid() and enabled) then
-    raise exception 'EMPLOYEE_ACCESS_REQUIRED' using errcode='42501';
-  end if;
   select jsonb_build_object('revision',revision,'payload',payload,'updated_at',updated_at,'updated_by',updated_by)
   into result from public.order_desk_workspace where id=1;
   return result;
@@ -36,9 +34,6 @@ returns jsonb language plpgsql security definer set search_path = '' as $$
 declare current_state public.order_desk_workspace%rowtype; item jsonb; ids text[]='{}'; numbers text[]='{}'; brks text[]='{}';
   max_sales bigint=0; max_brk bigint=799; n bigint; field_name text;
 begin
-  if auth.uid() is null or not exists(select 1 from public.order_desk_employees where user_id=auth.uid() and enabled) then
-    raise exception 'EMPLOYEE_ACCESS_REQUIRED' using errcode='42501';
-  end if;
   select * into current_state from public.order_desk_workspace where id=1 for update;
   if expected_revision is null or current_state.revision <> expected_revision then raise exception 'VERSION_CONFLICT' using errcode='40001'; end if;
   if jsonb_typeof(next_payload) is distinct from 'object'
@@ -99,5 +94,5 @@ begin
   return public.order_desk_read();
 end $$;
 revoke all on function public.order_desk_read(),public.order_desk_save(bigint,jsonb) from public,anon;
-grant execute on function public.order_desk_read(),public.order_desk_save(bigint,jsonb) to authenticated;
+grant execute on function public.order_desk_read(),public.order_desk_save(bigint,jsonb) to anon, authenticated;
 commit;

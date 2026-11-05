@@ -7,6 +7,9 @@ test('公開ファイルは内容のハッシュで参照し、登録ボタン�
   const root = new URL('../dist/', import.meta.url);
   const html = await readFile(new URL('index.html', root), 'utf8');
   assert.ok(!html.includes('案件を登録'));
+  assert.ok(!html.includes('社員ログイン'));
+  assert.ok(!html.includes('login-form'));
+  assert.match(html,/id="connection-screen"/);
   assert.match(html, /空行入力版/);
   const files = await readdir(root);
   assert.equal(files.length, 4);

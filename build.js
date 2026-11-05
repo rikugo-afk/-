@@ -16,7 +16,7 @@ for (const name of ['app.js', 'style.css']) {
   await writeFile(new URL(names[name], output), content);
 }
 let html = await readFile(new URL('index.html', import.meta.url), 'utf8');
-if(config.mode==='shared')html=html.replace('id="application"','id="application" hidden').replace('id="auth-screen" class="auth-screen" hidden','id="auth-screen" class="auth-screen"');
+if(config.mode==='shared')html=html.replace('id="application"','id="application" hidden').replace('id="connection-screen" class="auth-screen" hidden','id="connection-screen" class="auth-screen"');
 for (const name of ['app.js','style.css']) html = html.replace(`./${name}`, `./${names[name]}`);
 await writeFile(new URL('index.html', output), html);
 await writeFile(new URL('.nojekyll', output), '');
